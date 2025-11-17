@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	"connectrpc.com/connect"
 
 	drone "github.com/flightpath-dev/flightpath-proto/gen/go/drone/v1"
+	"github.com/flightpath-dev/flightpath-server/internal/mavlink"
 	"github.com/flightpath-dev/flightpath-server/internal/server"
 )
 
@@ -114,13 +116,100 @@ func (s *ControlServer) SetFlightMode(
 		}), nil
 	}
 
-	// TODO: Implement flight mode change via MAVLink
-	// This requires mapping generic FlightMode enum to MAVLink modes
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.SetFlightModeResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Map generic FlightMode to PX4 custom mode
+	customMode, err := s.mapFlightModeToPX4(req.Msg.Mode)
+	if err != nil {
+		return connect.NewResponse(&drone.SetFlightModeResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
+
+	// Send mode change command
+	if err := client.SetMode(customMode); err != nil {
+		return connect.NewResponse(&drone.SetFlightModeResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to set mode: %v", err),
+		}), nil
+	}
+
+	logger.Printf("Successfully set mode to %s (PX4 custom mode: %d)", req.Msg.Mode, customMode)
 
 	return connect.NewResponse(&drone.SetFlightModeResponse{
-		Success: false,
-		Message: "Flight mode change not yet implemented",
+		Success:     true,
+		Message:     fmt.Sprintf("Flight mode changed to %s", req.Msg.Mode),
+		CurrentMode: req.Msg.Mode,
 	}), nil
+}
+
+// mapFlightModeToPX4 maps generic FlightMode enum to PX4 custom mode
+func (s *ControlServer) mapFlightModeToPX4(mode drone.FlightMode) (uint32, error) {
+	switch mode {
+	case drone.FlightMode_FLIGHT_MODE_MANUAL:
+		// Manual mode - full manual control
+		return mavlink.PX4_CUSTOM_MAIN_MODE_MANUAL, nil
+
+	case drone.FlightMode_FLIGHT_MODE_STABILIZED:
+		// Stabilized mode - attitude stabilization
+		return mavlink.PX4_CUSTOM_MAIN_MODE_STABILIZED, nil
+
+	case drone.FlightMode_FLIGHT_MODE_ALTITUDE_HOLD:
+		// Altitude control mode
+		return mavlink.PX4_CUSTOM_MAIN_MODE_ALTCTL, nil
+
+	case drone.FlightMode_FLIGHT_MODE_POSITION_HOLD:
+		// Position control mode (holds GPS position)
+		return mavlink.PX4_CUSTOM_MAIN_MODE_POSCTL, nil
+
+	case drone.FlightMode_FLIGHT_MODE_GUIDED:
+		// Offboard/Guided mode (accepts external position commands)
+		// In PX4, this is OFFBOARD mode
+		return mavlink.PX4_CUSTOM_MAIN_MODE_OFFBOARD, nil
+
+	case drone.FlightMode_FLIGHT_MODE_AUTO:
+		// Auto mode - mission mode
+		// Main mode AUTO + sub mode MISSION
+		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_MISSION), nil
+
+	case drone.FlightMode_FLIGHT_MODE_RETURN_HOME:
+		// Return to launch mode
+		// Main mode AUTO + sub mode RTL
+		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_RTL), nil
+
+	case drone.FlightMode_FLIGHT_MODE_LAND:
+		// Land mode
+		// Main mode AUTO + sub mode LAND
+		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_LAND), nil
+
+	case drone.FlightMode_FLIGHT_MODE_TAKEOFF:
+		// Takeoff mode
+		// Main mode AUTO + sub mode TAKEOFF
+		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF), nil
+
+	case drone.FlightMode_FLIGHT_MODE_LOITER:
+		// Loiter mode (circle around current position)
+		// Main mode AUTO + sub mode LOITER
+		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_LOITER), nil
+
+	default:
+		return 0, fmt.Errorf("unsupported flight mode: %s", mode)
+	}
+}
+
+// encodePX4AutoMode encodes PX4 AUTO main mode with sub mode
+// PX4 custom mode format: main_mode | (sub_mode << 16)
+func (s *ControlServer) encodePX4AutoMode(subMode uint32) uint32 {
+	return mavlink.PX4_CUSTOM_MAIN_MODE_AUTO | (subMode << 16)
 }
 
 func (s *ControlServer) Takeoff(
@@ -258,6 +347,7 @@ func (s *ControlServer) GoToPosition(
 
 	// TODO: Implement goto position via MAVLink
 	// This requires SET_POSITION_TARGET_GLOBAL_INT message
+	// Must be in GUIDED/OFFBOARD mode first
 
 	return connect.NewResponse(&drone.GoToPositionResponse{
 		Success: false,

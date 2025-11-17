@@ -2,7 +2,11 @@
     "cSpell.words": [
         "ArduPilot",
         "connectrpc",
+        "Datalink",
+        "failsafes",
+        "geofence",
         "Holybro",
+        "Lockdown",
         "mavlink",
         "Quadcopter",
         "UART",

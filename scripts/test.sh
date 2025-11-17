@@ -37,6 +37,9 @@ case "$1" in
   disarm)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/Disarm
     ;;
+  mode)
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\", \"mode\": FLIGHT_MODE_$3}" $URL/drone.v1.ControlService/SetFlightMode
+    ;;
   takeoff)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\", \"altitude\": $3}" $URL/drone.v1.ControlService/Takeoff
     ;;
@@ -50,7 +53,9 @@ case "$1" in
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.TelemetryService/GetSnapshot
     ;;
   *)
-    echo "Usage: $0 {list|connect <drone_id>|status <drone_id>|arm <drone_id>|disarm <drone_id>|takeoff <altitude> <drone_id>|land <drone_id>|rtl <drone_id>|disconnect <drone_id>|snapshot <drone_id>}"
+    echo "Usage: $0 {list|connect <drone_id>|status <drone_id>|arm <drone_id>|disarm <drone_id>|mode <drone_id> <mode>|takeoff <drone_id> <altitude>|land <drone_id>|rtl <drone_id>|disconnect <drone_id>|snapshot <drone_id>}"
+    echo ""
+    echo "Modes: MANUAL, STABILIZED, ALTITUDE_HOLD, POSITION_HOLD, GUIDED, AUTO, RETURN_HOME, LAND, TAKEOFF, LOITER"
     exit 1
     ;;
 esac

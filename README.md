@@ -27,6 +27,7 @@ go run cmd/server/main.go
 
 # 5. Connect to drone (in another terminal)
 ./scripts/test.sh connect alpha
+```
 
 ## Message Flow
 
@@ -161,10 +162,14 @@ Send flight control commands.
 # Disarm drone
 ./scripts/test.sh disarm alpha
 
+# Set flight mode
+# Modes: MANUAL, STABILIZED, ALTITUDE_HOLD, POSITION_HOLD, GUIDED, AUTO, RETURN_HOME, LAND, TAKEOFF, LOITER
+./scripts/test.sh mode alpha GUIDED
+
 # Takeoff to 10 meters
 ./scripts/test.sh takeoff alpha 10
 
-# Land
+# Land at current or specified location
 ./scripts/test.sh land alpha
 
 # Return home
@@ -182,6 +187,228 @@ Stream real-time telemetry data (basic implementation).
 ### 4. MissionService 🚧 Implementation
 
 Autonomous mission planning and execution (stubs for future implementation).
+
+## Flight Modes for API Control
+
+Flightpath is designed for API-controlled flight **without RC transmitter**. Understanding flight modes is critical for safe operation.
+
+### GUIDED Mode (Recommended for API Control)
+
+**Use for:** Dynamic position commands from the API
+
+**What is GUIDED?**
+- Holds GPS position automatically (no drift)
+- **Accepts position/velocity commands from API** ✅
+- Responds immediately to `GoToPosition` commands
+- When not commanded, hovers safely in place
+- Think: "Position hold + API control enabled"
+
+**Stay in GUIDED for entire flight:**
+```bash
+# 1. Connect and arm
+./scripts/test.sh connect alpha
+./scripts/test.sh arm alpha
+
+# 2. Set GUIDED mode
+./scripts/test.sh mode alpha GUIDED
+
+# 3. Takeoff
+./scripts/test.sh takeoff alpha 20
+
+# 4. Send position commands (no mode changes needed!)
+# Drone responds immediately and holds position when idle
+
+# 5. Land at current or specified location
+./scripts/test.sh land alpha
+
+# 6. Disarm
+./scripts/test.sh disarm alpha
+```
+
+**Why GUIDED?**
+- ✅ Can send position commands at any time
+- ✅ Holds position safely when not commanded
+- ✅ No mode switching between commands
+- ✅ Most responsive to API commands
+
+### POSITION_HOLD Mode (Safety Lockdown)
+
+**Use for:** Preventing API commands (safety feature)
+
+**What is POSITION_HOLD?**
+- Holds GPS position automatically (no drift)
+- **Rejects position/velocity commands from API** ❌
+- Only responds to RC stick inputs (if connected)
+- Think: "Hold position and ignore external commands"
+
+**When to use:**
+- 🔒 Lock drone in place (prevent buggy API commands)
+- 🛑 Pause API control temporarily
+- ⏸️ Debugging/development pause
+
+**Key Difference:**
+```
+Scenario: API sends GoToPosition command
+
+GUIDED mode:
+  → ✅ "Roger, flying to new position"
+
+POSITION_HOLD mode:
+  → ❌ "Ignoring command, holding current position"
+```
+
+### AUTO Mode (Mission Control) ⭐ Safest for Autonomous
+
+**Use for:** Pre-programmed waypoint missions
+
+**What is AUTO?**
+- Follows uploaded waypoint mission
+- Fully autonomous (takeoff → waypoints → land)
+- Safest for predictable, pre-planned flights
+- No real-time API commands needed
+
+**Mission workflow:**
+```bash
+# 1. Create mission file with waypoints
+cat > mission.json << 'EOF'
+{
+  "mission": {
+    "id": "survey-001",
+    "name": "Area Survey",
+    "waypoints": [
+      {
+        "sequence": 0,
+        "action": "ACTION_TAKEOFF",
+        "position": {"latitude": 37.7749, "longitude": -122.4194, "altitude": 20}
+      },
+      {
+        "sequence": 1,
+        "action": "ACTION_WAYPOINT",
+        "position": {"latitude": 37.7750, "longitude": -122.4195, "altitude": 30}
+      },
+      {
+        "sequence": 2,
+        "action": "ACTION_LAND",
+        "position": {"latitude": 37.7749, "longitude": -122.4194, "altitude": 0}
+      }
+    ]
+  }
+}
+EOF
+
+# 2. Connect and upload mission
+./scripts/test.sh connect alpha
+buf curl --http2-prior-knowledge --protocol connect \
+  --data @mission.json \
+  http://localhost:8080/drone.v1.MissionService/UploadMission
+
+# 3. Arm and start mission
+./scripts/test.sh arm alpha
+buf curl --http2-prior-knowledge --protocol connect \
+  --data '{}' \
+  http://localhost:8080/drone.v1.MissionService/StartMission
+
+# Mission runs automatically: takeoff → waypoints → land
+# No position commands needed!
+```
+
+**Why AUTO for missions?**
+- ✅ Pre-planned safe path (reviewed before flight)
+- ✅ Includes takeoff and landing waypoints
+- ✅ Most predictable behavior
+- ✅ Best for unattended operations
+- ✅ Automatic failsafes (geofence, battery RTL)
+
+### RTL Mode (Return to Launch)
+
+**Use for:** Emergency return home
+
+**What is RTL?**
+- Autonomous return to launch position
+- Climbs to safe altitude, flies home, lands
+- Triggered automatically on low battery or geofence breach
+- Can be commanded via API
+```bash
+# Emergency return home
+./scripts/test.sh rtl alpha
+```
+
+### Mode Comparison
+
+| Mode | Accepts API Commands | Best For | Safety |
+|------|---------------------|----------|--------|
+| **GUIDED** | ✅ Yes | Dynamic API control | ⭐⭐⭐⭐ |
+| **POSITION_HOLD** | ❌ No | Safety lockdown | ⭐⭐⭐⭐⭐ |
+| **AUTO (Mission)** | ❌ No (follows mission) | Pre-planned autonomous | ⭐⭐⭐⭐⭐ |
+| **RTL** | ❌ No (autonomous return) | Emergency return | ⭐⭐⭐⭐⭐ |
+
+### Recommended Approach
+
+**For API Control:**
+1. Stay in **GUIDED mode** for entire flight
+2. Drone holds position when not commanded (safe)
+3. Responds immediately to position commands
+4. Switch to **POSITION_HOLD** only to "freeze" drone
+
+**For Autonomous Operations:**
+1. Use **AUTO mode** with pre-programmed missions
+2. Upload mission including takeoff and landing
+3. Start mission and monitor progress
+4. Most predictable and safest for unattended flight
+
+## Flight Safety
+
+### Pre-Flight Checklist (No RC)
+
+Before flying with API only:
+
+1. ⚠️ **Remove propellers** for initial testing
+2. ✅ Test mission in simulator first (if using AUTO mode)
+3. ✅ Verify GPS lock (satellite count ≥ 8)
+4. ✅ Check battery level (> 50% recommended)
+5. ✅ Confirm geofence is set correctly
+6. ✅ Set home position (for RTL)
+7. ✅ Verify clear flight area
+8. ✅ Test Return Home procedure
+9. ✅ Monitor telemetry during flight
+
+### Emergency Procedures (No RC)
+
+**If something goes wrong:**
+
+1. **Return Home** (Most Common)
+```bash
+./scripts/test.sh rtl alpha
+```
+
+2. **Hold Position** (Stop and hover - switch to POSITION_HOLD)
+```bash
+./scripts/test.sh mode alpha POSITION_HOLD
+```
+
+3. **Emergency Land** (Land immediately at current location)
+```bash
+./scripts/test.sh land alpha
+```
+
+**⚠️ DO NOT use EmergencyStop - it cuts motors and drone will fall!**
+
+### Automatic Failsafes
+
+PX4/ArduPilot automatically handles:
+
+- **Low Battery** → Triggers RTL automatically
+- **GPS Lost** → Enters ALTITUDE_HOLD and hovers
+- **Geofence Breach** → Triggers RTL or LAND
+- **Datalink Loss** → Configured failsafe action (default: RTL)
+
+### API Connection Loss
+
+If API/network connection is lost:
+
+- **GUIDED mode** → Continues hovering at last position (safe)
+- **AUTO mode** → Continues mission as programmed
+- If connection lost > timeout → Triggers failsafe (RTL)
 
 ## Adding a New Drone
 
@@ -254,14 +481,13 @@ console.log(response.message);
 go run cmd/server/main.go
 
 # 2. In another terminal
-```bash
 ./scripts/test.sh list                # List all drones in registry
 ./scripts/test.sh connect alpha       # Connect to alpha
 ./scripts/test.sh status alpha        # Check status
 ./scripts/test.sh snapshot alpha      # Get telemetry snapshot
 ./scripts/test.sh arm alpha           # Arm
 ./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
-./scripts/test.sh land alpha          # Land
+./scripts/test.sh land alpha          # Land at current or specified location
 ./scripts/test.sh rtl alpha           # Return home
 ./scripts/test.sh disarm alpha        # Disarm
 ./scripts/test.sh disconnect alpha    # Disconnect

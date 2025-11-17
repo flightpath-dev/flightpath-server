@@ -11,6 +11,30 @@ import (
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
 )
 
+// PX4 Custom Main Modes
+const (
+	PX4_CUSTOM_MAIN_MODE_MANUAL     = 1
+	PX4_CUSTOM_MAIN_MODE_ALTCTL     = 2
+	PX4_CUSTOM_MAIN_MODE_POSCTL     = 3
+	PX4_CUSTOM_MAIN_MODE_AUTO       = 4
+	PX4_CUSTOM_MAIN_MODE_ACRO       = 5
+	PX4_CUSTOM_MAIN_MODE_OFFBOARD   = 6
+	PX4_CUSTOM_MAIN_MODE_STABILIZED = 7
+	PX4_CUSTOM_MAIN_MODE_RATTITUDE  = 8
+)
+
+// PX4 Custom Sub Modes (for AUTO mode)
+const (
+	PX4_CUSTOM_SUB_MODE_AUTO_READY    = 1
+	PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF  = 2
+	PX4_CUSTOM_SUB_MODE_AUTO_LOITER   = 3
+	PX4_CUSTOM_SUB_MODE_AUTO_MISSION  = 4
+	PX4_CUSTOM_SUB_MODE_AUTO_RTL      = 5
+	PX4_CUSTOM_SUB_MODE_AUTO_LAND     = 6
+	PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW   = 8
+	PX4_CUSTOM_SUB_MODE_AUTO_PRECLAND = 9
+)
+
 // Client represents a MAVLink connection to a drone
 type Client struct {
 	node      *gomavlib.Node
@@ -233,6 +257,30 @@ func (c *Client) Disarm() error {
 		TargetComponent: 1,
 		Command:         common.MAV_CMD_COMPONENT_ARM_DISARM,
 		Param1:          0, // 1 = arm, 0 = disarm
+	})
+}
+
+// SetMode sets the flight mode using PX4 custom mode
+func (c *Client) SetMode(customMode uint32) error {
+	c.mu.RLock()
+	systemID := c.systemID
+	c.mu.RUnlock()
+
+	if !c.IsConnected() {
+		return fmt.Errorf("not connected to drone")
+	}
+
+	c.logger.Printf("MAVLink: Setting mode to custom mode %d", customMode)
+
+	// Send MAV_CMD_DO_SET_MODE command
+	// Param1: Mode (MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1)
+	// Param2: Custom mode
+	return c.node.WriteMessageAll(&common.MessageCommandLong{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		Command:         common.MAV_CMD_DO_SET_MODE,
+		Param1:          float32(common.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED),
+		Param2:          float32(customMode),
 	})
 }
 
