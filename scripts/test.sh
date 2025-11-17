@@ -25,6 +25,9 @@ case "$1" in
   connect)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/Connect
     ;;
+  disconnect)
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/Disconnect
+    ;;
   status)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/GetStatus
     ;;
@@ -42,9 +45,6 @@ case "$1" in
     ;;
   rtl)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/ReturnHome
-    ;;
-  disconnect)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/Disconnect
     ;;
   snapshot)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.TelemetryService/GetSnapshot

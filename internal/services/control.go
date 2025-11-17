@@ -264,27 +264,3 @@ func (s *ControlServer) GoToPosition(
 		Message: "Go to position not yet implemented",
 	}), nil
 }
-
-func (s *ControlServer) EmergencyStop(
-	ctx context.Context,
-	req *connect.Request[drone.EmergencyStopRequest],
-) (*connect.Response[drone.EmergencyStopResponse], error) {
-	logger := s.deps.GetLogger()
-	logger.Println("⚠️  EMERGENCY STOP request")
-
-	// Check if MAVLink client exists
-	if !s.deps.HasMAVLinkClient() {
-		return connect.NewResponse(&drone.EmergencyStopResponse{
-			Success: false,
-			Message: "Not connected to drone",
-		}), nil
-	}
-
-	// TODO: Implement emergency motor stop via MAVLink
-	// This is MAV_CMD_DO_MOTOR_STOP or similar
-
-	return connect.NewResponse(&drone.EmergencyStopResponse{
-		Success: false,
-		Message: "Emergency stop not yet implemented",
-	}), nil
-}

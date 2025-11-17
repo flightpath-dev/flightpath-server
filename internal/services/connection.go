@@ -59,12 +59,6 @@ func (s *ConnectionServer) Connect(
 	droneConfig, err := registry.FindDrone(req.Msg.DroneId)
 	if err != nil {
 		// Drone not found in registry
-		// Check if parameters were provided as override (for dev/testing)
-		if len(req.Msg.Parameters) > 0 {
-			logger.Printf("Drone %s not in registry, using provided parameters", req.Msg.DroneId)
-			return s.connectWithParameters(ctx, req)
-		}
-
 		return connect.NewResponse(&drone.ConnectResponse{
 			Success: false,
 			Message: fmt.Sprintf("Drone not found in registry: %s. Available drones: %v",
@@ -158,62 +152,6 @@ func (s *ConnectionServer) connectMAVLink(
 		Manufacturer: "PX4", // TODO: Get from AUTOPILOT_VERSION message
 		Model:        droneConfig.Description,
 		// TODO: Get capabilities from drone
-	}), nil
-}
-
-// connectWithParameters allows connection with explicit parameters (dev/testing only)
-func (s *ConnectionServer) connectWithParameters(
-	ctx context.Context,
-	req *connect.Request[drone.ConnectRequest],
-) (*connect.Response[drone.ConnectResponse], error) {
-	logger := s.deps.GetLogger()
-	logger.Printf("Development mode: Connecting with explicit parameters")
-
-	// This is the fallback for development/testing when drone not in registry
-	port := req.Msg.Parameters["port"]
-	baudRateStr := req.Msg.Parameters["baud_rate"]
-
-	if port == "" {
-		port = s.deps.Config.MAVLink.DefaultPort
-	}
-
-	baudRate := s.deps.Config.MAVLink.DefaultBaudRate
-	if baudRateStr != "" {
-		fmt.Sscanf(baudRateStr, "%d", &baudRate)
-	}
-
-	timeout := 5 * time.Second
-	if req.Msg.TimeoutMs > 0 {
-		timeout = time.Duration(req.Msg.TimeoutMs) * time.Millisecond
-	}
-
-	client, err := mavlink.NewClient(mavlink.Config{
-		Port:     port,
-		BaudRate: baudRate,
-		Logger:   logger,
-	})
-	if err != nil {
-		return connect.NewResponse(&drone.ConnectResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to create MAVLink connection: %v", err),
-		}), nil
-	}
-
-	if err := client.WaitForConnection(timeout); err != nil {
-		client.Close()
-		return connect.NewResponse(&drone.ConnectResponse{
-			Success: false,
-			Message: fmt.Sprintf("Connection timeout: %v", err),
-		}), nil
-	}
-
-	s.deps.SetMAVLinkClient(client)
-
-	return connect.NewResponse(&drone.ConnectResponse{
-		Success:   true,
-		Message:   fmt.Sprintf("Connected (System ID: %d)", client.GetSystemID()),
-		DroneId:   req.Msg.DroneId,
-		DroneName: req.Msg.DroneId,
 	}), nil
 }
 

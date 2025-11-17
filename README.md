@@ -287,7 +287,7 @@ Proto definitions are in a separate repository: [`flightpath-proto`](https://git
 To update to a new proto version:
 ```bash
 # Update proto dependency
-go get github.com/flightpath-dev/flightpath-proto@v0.2.0
+go get -u github.com/flightpath-dev/flightpath-proto@latest
 
 # Update go.mod
 go mod tidy
