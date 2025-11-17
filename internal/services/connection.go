@@ -2,10 +2,14 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"connectrpc.com/connect"
 
 	drone "github.com/flightpath-dev/flightpath-proto/gen/go/drone/v1"
+	"github.com/flightpath-dev/flightpath-server/internal/config"
+	"github.com/flightpath-dev/flightpath-server/internal/mavlink"
 	"github.com/flightpath-dev/flightpath-server/internal/server"
 )
 
@@ -25,14 +29,202 @@ func (s *ConnectionServer) Connect(
 	ctx context.Context,
 	req *connect.Request[drone.ConnectRequest],
 ) (*connect.Response[drone.ConnectResponse], error) {
-	s.deps.GetLogger().Printf("Connect request: drone_id=%s, timeout_ms=%d", req.Msg.DroneId, req.Msg.TimeoutMs)
+	logger := s.deps.GetLogger()
+	logger.Printf("Connect request: drone_id=%s", req.Msg.DroneId)
 
-	// TODO: Implement MAVLink connection in next iteration
+	// Require drone_id
+	if req.Msg.DroneId == "" {
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: "drone_id is required",
+		}), nil
+	}
+
+	// Check if already connected
+	if s.deps.HasMAVLinkClient() {
+		client := s.deps.GetMAVLinkClient()
+		if client.IsConnected() {
+			return connect.NewResponse(&drone.ConnectResponse{
+				Success: false,
+				Message: "Already connected to a drone. Disconnect first.",
+			}), nil
+		}
+
+		// Clean up old disconnected client
+		client.Close()
+	}
+
+	// Look up drone in registry
+	registry := s.deps.GetDroneRegistry()
+	droneConfig, err := registry.FindDrone(req.Msg.DroneId)
+	if err != nil {
+		// Drone not found in registry
+		// Check if parameters were provided as override (for dev/testing)
+		if len(req.Msg.Parameters) > 0 {
+			logger.Printf("Drone %s not in registry, using provided parameters", req.Msg.DroneId)
+			return s.connectWithParameters(ctx, req)
+		}
+
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Drone not found in registry: %s. Available drones: %v",
+				req.Msg.DroneId, s.getAvailableDroneIDs()),
+		}), nil
+	}
+
+	logger.Printf("Found drone in registry: %s (%s) using protocol: %s",
+		droneConfig.ID, droneConfig.Name, droneConfig.Protocol)
+
+	// Route to appropriate protocol handler
+	switch droneConfig.Protocol {
+	case "mavlink":
+		return s.connectMAVLink(ctx, req, droneConfig)
+	case "dji":
+		// TODO: Implement DJI protocol
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: "DJI protocol not yet implemented",
+		}), nil
+	default:
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Unknown protocol: %s", droneConfig.Protocol),
+		}), nil
+	}
+}
+
+// connectMAVLink handles MAVLink protocol connections
+func (s *ConnectionServer) connectMAVLink(
+	ctx context.Context,
+	req *connect.Request[drone.ConnectRequest],
+	droneConfig *config.DroneConfig,
+) (*connect.Response[drone.ConnectResponse], error) {
+	logger := s.deps.GetLogger()
+
+	// Extract MAVLink connection parameters from drone config
+	port := droneConfig.GetConnectionString("port")
+	baudRate := droneConfig.GetConnectionInt("baud_rate")
+
+	if port == "" {
+		port = s.deps.Config.MAVLink.DefaultPort
+		logger.Printf("No port specified in config, using default: %s", port)
+	}
+	if baudRate == 0 {
+		baudRate = s.deps.Config.MAVLink.DefaultBaudRate
+		logger.Printf("No baud rate specified in config, using default: %d", baudRate)
+	}
+
+	logger.Printf("Connecting to MAVLink drone on %s at %d baud", port, baudRate)
+
+	// Get timeout (use from request or default to 5 seconds)
+	timeout := 5 * time.Second
+	if req.Msg.TimeoutMs > 0 {
+		timeout = time.Duration(req.Msg.TimeoutMs) * time.Millisecond
+	}
+
+	// Create MAVLink client
+	client, err := mavlink.NewClient(mavlink.Config{
+		Port:     port,
+		BaudRate: baudRate,
+		Logger:   logger,
+	})
+	if err != nil {
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to create MAVLink connection: %v", err),
+		}), nil
+	}
+
+	// Wait for heartbeat (with timeout)
+	if err := client.WaitForConnection(timeout); err != nil {
+		client.Close()
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Connection timeout: %v", err),
+		}), nil
+	}
+
+	// Store client in dependencies
+	s.deps.SetMAVLinkClient(client)
+
+	logger.Printf("Successfully connected to drone %s (MAVLink System ID: %d)",
+		droneConfig.ID, client.GetSystemID())
 
 	return connect.NewResponse(&drone.ConnectResponse{
-		Success: true,
-		Message: "Connection logic not yet implemented",
+		Success:      true,
+		Message:      fmt.Sprintf("Connected to %s (System ID: %d)", droneConfig.Name, client.GetSystemID()),
+		DroneId:      droneConfig.ID,
+		DroneName:    droneConfig.Name,
+		Manufacturer: "PX4", // TODO: Get from AUTOPILOT_VERSION message
+		Model:        droneConfig.Description,
+		// TODO: Get capabilities from drone
 	}), nil
+}
+
+// connectWithParameters allows connection with explicit parameters (dev/testing only)
+func (s *ConnectionServer) connectWithParameters(
+	ctx context.Context,
+	req *connect.Request[drone.ConnectRequest],
+) (*connect.Response[drone.ConnectResponse], error) {
+	logger := s.deps.GetLogger()
+	logger.Printf("Development mode: Connecting with explicit parameters")
+
+	// This is the fallback for development/testing when drone not in registry
+	port := req.Msg.Parameters["port"]
+	baudRateStr := req.Msg.Parameters["baud_rate"]
+
+	if port == "" {
+		port = s.deps.Config.MAVLink.DefaultPort
+	}
+
+	baudRate := s.deps.Config.MAVLink.DefaultBaudRate
+	if baudRateStr != "" {
+		fmt.Sscanf(baudRateStr, "%d", &baudRate)
+	}
+
+	timeout := 5 * time.Second
+	if req.Msg.TimeoutMs > 0 {
+		timeout = time.Duration(req.Msg.TimeoutMs) * time.Millisecond
+	}
+
+	client, err := mavlink.NewClient(mavlink.Config{
+		Port:     port,
+		BaudRate: baudRate,
+		Logger:   logger,
+	})
+	if err != nil {
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to create MAVLink connection: %v", err),
+		}), nil
+	}
+
+	if err := client.WaitForConnection(timeout); err != nil {
+		client.Close()
+		return connect.NewResponse(&drone.ConnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Connection timeout: %v", err),
+		}), nil
+	}
+
+	s.deps.SetMAVLinkClient(client)
+
+	return connect.NewResponse(&drone.ConnectResponse{
+		Success:   true,
+		Message:   fmt.Sprintf("Connected (System ID: %d)", client.GetSystemID()),
+		DroneId:   req.Msg.DroneId,
+		DroneName: req.Msg.DroneId,
+	}), nil
+}
+
+// getAvailableDroneIDs returns list of configured drone IDs
+func (s *ConnectionServer) getAvailableDroneIDs() []string {
+	registry := s.deps.GetDroneRegistry()
+	ids := make([]string, len(registry.Drones))
+	for i, drone := range registry.Drones {
+		ids[i] = drone.ID
+	}
+	return ids
 }
 
 func (s *ConnectionServer) GetStatus(
@@ -41,14 +233,19 @@ func (s *ConnectionServer) GetStatus(
 ) (*connect.Response[drone.GetStatusResponse], error) {
 	s.deps.GetLogger().Println("GetStatus request")
 
-	// TODO: Return actual status in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.GetStatusResponse{
+			Connected: false,
+			Armed:     false,
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
 
 	return connect.NewResponse(&drone.GetStatusResponse{
-		Connected:        false,
-		UptimeMs:         0,
-		LastMessageMs:    0,
-		MessagesReceived: 0,
-		MessagesSent:     0,
+		Connected: client.IsConnected(),
+		Armed:     client.IsArmed(),
 	}), nil
 }
 
@@ -56,24 +253,55 @@ func (s *ConnectionServer) Disconnect(
 	ctx context.Context,
 	req *connect.Request[drone.DisconnectRequest],
 ) (*connect.Response[drone.DisconnectResponse], error) {
-	s.deps.GetLogger().Println("Disconnect request")
+	logger := s.deps.GetLogger()
+	logger.Println("Disconnect request")
 
-	// TODO: Implement disconnect logic in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.DisconnectResponse{
+			Success: false,
+			Message: "Not connected to any drone",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Close the connection
+	if err := client.Close(); err != nil {
+		return connect.NewResponse(&drone.DisconnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Error closing connection: %v", err),
+		}), nil
+	}
+
+	logger.Println("Successfully disconnected from drone")
 
 	return connect.NewResponse(&drone.DisconnectResponse{
 		Success: true,
-		Message: "Disconnect logic not yet implemented",
+		Message: "Disconnected successfully",
 	}), nil
 }
 
-func (s *ConnectionServer) StreamHealth(
+func (s *ConnectionServer) ListDrones(
 	ctx context.Context,
-	req *connect.Request[drone.StreamHealthRequest],
-	stream *connect.ServerStream[drone.StreamHealthResponse],
-) error {
-	s.deps.GetLogger().Println("StreamHealth request")
+	req *connect.Request[drone.ListDronesRequest],
+) (*connect.Response[drone.ListDronesResponse], error) {
+	logger := s.deps.GetLogger()
+	logger.Println("ListDrones request")
 
-	// TODO: Implement health streaming in next iteration
+	registry := s.deps.GetDroneRegistry()
+	drones := make([]*drone.DroneInfo, 0, len(registry.Drones))
 
-	return nil
+	for _, droneConfig := range registry.Drones {
+		drones = append(drones, &drone.DroneInfo{
+			Id:          droneConfig.ID,
+			Name:        droneConfig.Name,
+			Description: droneConfig.Description,
+			Protocol:    droneConfig.Protocol,
+		})
+	}
+
+	return connect.NewResponse(&drone.ListDronesResponse{
+		Drones: drones,
+	}), nil
 }

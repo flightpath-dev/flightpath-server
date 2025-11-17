@@ -1,0 +1,42 @@
+# Flightpath Drone Registry
+# Configure your drones here - frontend only needs to know the drone ID
+
+drones:
+  # Example drone using MAVLink (PX4/ArduPilot)
+  - id: "alpha"
+    name: "Alpha X500"
+    description: "Primary test drone - Holybro X500 V2"
+    protocol: "mavlink"
+    connection:
+      type: "serial"
+      port: "/dev/ttyUSB0"
+      baud_rate: 57600
+
+  # Example second drone on different port
+  - id: "bravo"
+    name: "Bravo Quadcopter"
+    description: "Secondary test drone"
+    protocol: "mavlink"
+    connection:
+      type: "serial"
+      port: "/dev/ttyUSB1"
+      baud_rate: 115200
+
+  # Example macOS drone (different serial path)
+  - id: "macos-drone"
+    name: "MacOS Development Drone"
+    description: "Drone connected to Mac"
+    protocol: "mavlink"
+    connection:
+      type: "serial"
+      port: "/dev/tty.usbserial-A50285BI"
+      baud_rate: 57600
+
+  # Example UDP connection (for simulator)
+  - id: "simulator"
+    name: "SITL Simulator"
+    description: "Software-in-the-loop simulation"
+    protocol: "mavlink"
+    connection:
+      type: "udp"
+      address: "127.0.0.1:14550"

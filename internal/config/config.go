@@ -12,9 +12,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host        string
-	Port        int
-	CORSOrigins []string
+	Host              string
+	Port              int
+	CORSOrigins       []string
+	DroneRegistryPath string // Path to drones.yaml
 }
 
 type MAVLinkConfig struct {
@@ -38,6 +39,7 @@ func Default() *Config {
 				"http://localhost:5173", // Vite dev server
 				"http://localhost:3000",
 			},
+			DroneRegistryPath: "./data/config/drones.yaml",
 		},
 		MAVLink: MAVLinkConfig{
 			DefaultPort:     "/dev/ttyUSB0",

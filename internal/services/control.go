@@ -25,13 +25,38 @@ func (s *ControlServer) Arm(
 	ctx context.Context,
 	req *connect.Request[drone.ArmRequest],
 ) (*connect.Response[drone.ArmResponse], error) {
-	s.deps.GetLogger().Println("Arm request")
+	logger := s.deps.GetLogger()
+	logger.Println("Arm request")
 
-	// TODO: Implement arm command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.ArmResponse{
+			Success: false,
+			Message: "Not connected to drone. Call Connect first.",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.ArmResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Send arm command
+	if err := client.Arm(); err != nil {
+		return connect.NewResponse(&drone.ArmResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
 
 	return connect.NewResponse(&drone.ArmResponse{
 		Success: true,
-		Message: "Arm logic not yet implemented",
+		Message: "Arm command sent successfully",
 	}), nil
 }
 
@@ -39,27 +64,62 @@ func (s *ControlServer) Disarm(
 	ctx context.Context,
 	req *connect.Request[drone.DisarmRequest],
 ) (*connect.Response[drone.DisarmResponse], error) {
-	s.deps.GetLogger().Println("Disarm request")
+	logger := s.deps.GetLogger()
+	logger.Println("Disarm request")
 
-	// TODO: Implement disarm command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.DisarmResponse{
+			Success: false,
+			Message: "Not connected to drone. Call Connect first.",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.DisarmResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Send disarm command
+	if err := client.Disarm(); err != nil {
+		return connect.NewResponse(&drone.DisarmResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
 
 	return connect.NewResponse(&drone.DisarmResponse{
 		Success: true,
-		Message: "Disarm logic not yet implemented",
+		Message: "Disarm command sent successfully",
 	}), nil
 }
 
-func (s *ControlServer) SetMode(
+func (s *ControlServer) SetFlightMode(
 	ctx context.Context,
-	req *connect.Request[drone.SetModeRequest],
-) (*connect.Response[drone.SetModeResponse], error) {
-	s.deps.GetLogger().Println("SetMode request")
+	req *connect.Request[drone.SetFlightModeRequest],
+) (*connect.Response[drone.SetFlightModeResponse], error) {
+	logger := s.deps.GetLogger()
+	logger.Printf("SetFlightMode request: mode=%s", req.Msg.Mode)
 
-	// TODO: Implement set mode command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.SetFlightModeResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
 
-	return connect.NewResponse(&drone.SetModeResponse{
-		Success: true,
-		Message: "SetMode logic not yet implemented",
+	// TODO: Implement flight mode change via MAVLink
+	// This requires mapping generic FlightMode enum to MAVLink modes
+
+	return connect.NewResponse(&drone.SetFlightModeResponse{
+		Success: false,
+		Message: "Flight mode change not yet implemented",
 	}), nil
 }
 
@@ -67,13 +127,38 @@ func (s *ControlServer) Takeoff(
 	ctx context.Context,
 	req *connect.Request[drone.TakeoffRequest],
 ) (*connect.Response[drone.TakeoffResponse], error) {
-	s.deps.GetLogger().Println("Takeoff request")
+	logger := s.deps.GetLogger()
+	logger.Printf("Takeoff request: altitude=%.2fm", req.Msg.Altitude)
 
-	// TODO: Implement takeoff command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.TakeoffResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.TakeoffResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Send takeoff command
+	if err := client.Takeoff(float32(req.Msg.Altitude)); err != nil {
+		return connect.NewResponse(&drone.TakeoffResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
 
 	return connect.NewResponse(&drone.TakeoffResponse{
 		Success: true,
-		Message: "Takeoff logic not yet implemented",
+		Message: "Takeoff command sent successfully",
 	}), nil
 }
 
@@ -81,13 +166,38 @@ func (s *ControlServer) Land(
 	ctx context.Context,
 	req *connect.Request[drone.LandRequest],
 ) (*connect.Response[drone.LandResponse], error) {
-	s.deps.GetLogger().Println("Land request")
+	logger := s.deps.GetLogger()
+	logger.Println("Land request")
 
-	// TODO: Implement land command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.LandResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.LandResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Send land command
+	if err := client.Land(); err != nil {
+		return connect.NewResponse(&drone.LandResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
 
 	return connect.NewResponse(&drone.LandResponse{
 		Success: true,
-		Message: "Land logic not yet implemented",
+		Message: "Land command sent successfully",
 	}), nil
 }
 
@@ -95,13 +205,38 @@ func (s *ControlServer) ReturnHome(
 	ctx context.Context,
 	req *connect.Request[drone.ReturnHomeRequest],
 ) (*connect.Response[drone.ReturnHomeResponse], error) {
-	s.deps.GetLogger().Println("ReturnHome request")
+	logger := s.deps.GetLogger()
+	logger.Println("ReturnHome request")
 
-	// TODO: Implement return home command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.ReturnHomeResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
+
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.ReturnHomeResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Send return to launch command
+	if err := client.ReturnToLaunch(); err != nil {
+		return connect.NewResponse(&drone.ReturnHomeResponse{
+			Success: false,
+			Message: err.Error(),
+		}), nil
+	}
 
 	return connect.NewResponse(&drone.ReturnHomeResponse{
 		Success: true,
-		Message: "ReturnHome logic not yet implemented",
+		Message: "Return home command sent successfully",
 	}), nil
 }
 
@@ -109,41 +244,24 @@ func (s *ControlServer) GoToPosition(
 	ctx context.Context,
 	req *connect.Request[drone.GoToPositionRequest],
 ) (*connect.Response[drone.GoToPositionResponse], error) {
-	s.deps.GetLogger().Println("GoToPosition request")
+	logger := s.deps.GetLogger()
+	logger.Printf("GoToPosition request: lat=%.6f, lon=%.6f, alt=%.2f",
+		req.Msg.Target.Latitude, req.Msg.Target.Longitude, req.Msg.Target.Altitude)
 
-	// TODO: Implement go to position command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.GoToPositionResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
+
+	// TODO: Implement goto position via MAVLink
+	// This requires SET_POSITION_TARGET_GLOBAL_INT message
 
 	return connect.NewResponse(&drone.GoToPositionResponse{
-		Success: true,
-		Message: "GoToPosition logic not yet implemented",
-	}), nil
-}
-
-func (s *ControlServer) SetVelocity(
-	ctx context.Context,
-	req *connect.Request[drone.SetVelocityRequest],
-) (*connect.Response[drone.SetVelocityResponse], error) {
-	s.deps.GetLogger().Println("SetVelocity request")
-
-	// TODO: Implement set velocity command in next iteration
-
-	return connect.NewResponse(&drone.SetVelocityResponse{
-		Success: true,
-		Message: "SetVelocity logic not yet implemented",
-	}), nil
-}
-
-func (s *ControlServer) SetHome(
-	ctx context.Context,
-	req *connect.Request[drone.SetHomeRequest],
-) (*connect.Response[drone.SetHomeResponse], error) {
-	s.deps.GetLogger().Println("SetHome request")
-
-	// TODO: Implement set home command in next iteration
-
-	return connect.NewResponse(&drone.SetHomeResponse{
-		Success: true,
-		Message: "SetHome logic not yet implemented",
+		Success: false,
+		Message: "Go to position not yet implemented",
 	}), nil
 }
 
@@ -151,12 +269,22 @@ func (s *ControlServer) EmergencyStop(
 	ctx context.Context,
 	req *connect.Request[drone.EmergencyStopRequest],
 ) (*connect.Response[drone.EmergencyStopResponse], error) {
-	s.deps.GetLogger().Println("EmergencyStop request")
+	logger := s.deps.GetLogger()
+	logger.Println("⚠️  EMERGENCY STOP request")
 
-	// TODO: Implement emergency stop command in next iteration
+	// Check if MAVLink client exists
+	if !s.deps.HasMAVLinkClient() {
+		return connect.NewResponse(&drone.EmergencyStopResponse{
+			Success: false,
+			Message: "Not connected to drone",
+		}), nil
+	}
+
+	// TODO: Implement emergency motor stop via MAVLink
+	// This is MAV_CMD_DO_MOTOR_STOP or similar
 
 	return connect.NewResponse(&drone.EmergencyStopResponse{
-		Success: true,
-		Message: "EmergencyStop logic not yet implemented",
+		Success: false,
+		Message: "Emergency stop not yet implemented",
 	}), nil
 }

@@ -23,7 +23,6 @@ go.work
 .env.local
 
 # IDEs
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -35,9 +34,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Data directory (will be created at runtime)
-data/
 
 # Temporary files
 tmp/

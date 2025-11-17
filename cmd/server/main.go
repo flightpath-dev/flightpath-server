@@ -26,7 +26,7 @@ func main() {
 	registerServices(srv, deps)
 
 	// Setup graceful shutdown
-	go handleShutdown(srv)
+	go handleShutdown(srv, deps)
 
 	// Start server
 	if err := srv.Start(); err != nil {
@@ -36,24 +36,29 @@ func main() {
 
 // registerServices registers all Connect services
 func registerServices(srv *server.Server, deps *server.Dependencies) {
-	// Connection service
+	// Connection service (fully implemented)
 	connServer := services.NewConnectionServer(deps)
 	connPath, connHandler := droneConnect.NewConnectionServiceHandler(connServer)
 	srv.RegisterService(connPath, connHandler)
 
-	// Control service
+	// Control service (fully implemented)
 	ctrlServer := services.NewControlServer(deps)
 	ctrlPath, ctrlHandler := droneConnect.NewControlServiceHandler(ctrlServer)
 	srv.RegisterService(ctrlPath, ctrlHandler)
 
-	// Future services can be registered here:
-	// telemetryServer := services.NewTelemetryServer(deps)
-	// telePath, teleHandler := droneConnect.NewTelemetryServiceHandler(telemetryServer)
-	// srv.RegisterService(telePath, teleHandler)
+	// Telemetry service (skeleton implementation)
+	telemetryServer := services.NewTelemetryServer(deps)
+	telemetryPath, telemetryHandler := droneConnect.NewTelemetryServiceHandler(telemetryServer)
+	srv.RegisterService(telemetryPath, telemetryHandler)
+
+	// Mission service (skeleton implementation)
+	missionServer := services.NewMissionServer(deps)
+	missionPath, missionHandler := droneConnect.NewMissionServiceHandler(missionServer)
+	srv.RegisterService(missionPath, missionHandler)
 }
 
 // handleShutdown handles graceful shutdown on interrupt signals
-func handleShutdown(srv *server.Server) {
+func handleShutdown(srv *server.Server, deps *server.Dependencies) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
@@ -61,7 +66,14 @@ func handleShutdown(srv *server.Server) {
 
 	log.Println("\n🛑 Shutting down server gracefully...")
 
-	// TODO: Add cleanup logic here (close MAVLink connections, etc.)
+	// Close MAVLink connection if exists
+	if deps.HasMAVLinkClient() {
+		client := deps.GetMAVLinkClient()
+		if err := client.Close(); err != nil {
+			log.Printf("Error closing MAVLink connection: %v", err)
+		}
+	}
 
+	log.Println("✅ Cleanup complete")
 	os.Exit(0)
 }

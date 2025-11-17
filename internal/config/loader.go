@@ -36,6 +36,10 @@ func Load() *Config {
 		}
 	}
 
+	if registryPath := os.Getenv("FLIGHTPATH_DRONE_REGISTRY"); registryPath != "" {
+		cfg.Server.DroneRegistryPath = registryPath
+	}
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Invalid configuration: %v", err)
