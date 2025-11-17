@@ -2,6 +2,20 @@
 
 # Helper script for testing Flightpath server
 
+# Using `curl` (simpler, no schema required)
+#
+# Alternative: Using `buf curl` (requires schema):
+# git clone https://github.com/flightpath-dev/flightpath-proto
+# buf curl --http2-prior-knowledge \
+#   --protocol connect \
+#   --schema <path-to-flightpath-proto> \
+#   --data '{"drone_id": "alpha"}' \
+#   http://localhost:8080/drone.v1.ConnectionService/Connect
+#
+# **Note:** This script uses the `--http2-prior-knowledge` flag. This is required for development because we're using HTTP instead of HTTPS.
+# In production with HTTPS, this flag is not needed.
+
+
 URL="http://localhost:8080"
 
 case "$1" in
@@ -12,28 +26,31 @@ case "$1" in
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/Connect
     ;;
   status)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ConnectionService/GetStatus
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/GetStatus
     ;;
   arm)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ControlService/Arm
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/Arm
     ;;
   disarm)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ControlService/Disarm
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/Disarm
     ;;
   takeoff)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"altitude\": $2}" $URL/drone.v1.ControlService/Takeoff
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\", \"altitude\": $3}" $URL/drone.v1.ControlService/Takeoff
     ;;
   land)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ControlService/Land
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/Land
     ;;
   rtl)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ControlService/ReturnHome
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/ReturnHome
     ;;
   disconnect)
-    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d '{}' $URL/drone.v1.ConnectionService/Disconnect
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ConnectionService/Disconnect
+    ;;
+  snapshot)
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.TelemetryService/GetSnapshot
     ;;
   *)
-    echo "Usage: $0 {list|connect <drone_id>|status|arm|disarm|takeoff <altitude>|land|rtl|disconnect}"
+    echo "Usage: $0 {list|connect <drone_id>|status <drone_id>|arm <drone_id>|disarm <drone_id>|takeoff <altitude> <drone_id>|land <drone_id>|rtl <drone_id>|disconnect <drone_id>|snapshot <drone_id>}"
     exit 1
     ;;
 esac

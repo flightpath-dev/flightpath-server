@@ -3,13 +3,14 @@
 
 drones:
   # Example drone using MAVLink (PX4/ArduPilot)
+  # Find the port by running `ls -1 /dev/cu.*`
   - id: "alpha"
     name: "Alpha X500"
     description: "Primary test drone - Holybro X500 V2"
     protocol: "mavlink"
     connection:
       type: "serial"
-      port: "/dev/ttyUSB0"
+      port: "/dev/cu.usbserial-D30JAXGS"
       baud_rate: 57600
 
   # Example second drone on different port

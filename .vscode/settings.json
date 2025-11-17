@@ -1,6 +1,12 @@
 {
     "cSpell.words": [
+        "ArduPilot",
+        "connectrpc",
+        "Holybro",
         "mavlink",
+        "Quadcopter",
+        "UART",
+        "usbserial",
         "Vite"
     ]
 }

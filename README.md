@@ -1,4 +1,4 @@
-# Flightpath Server - Protocol-Agnostic Drone Control
+# Flightpath Server
 
 Go backend for controlling drones through a unified, protocol-agnostic API.
 
@@ -26,33 +26,20 @@ nano data/config/drones.yaml
 go run cmd/server/main.go
 
 # 5. Connect to drone (in another terminal)
-# Using curl (simpler, no schema required):
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"drone_id": "alpha"}' \
-  http://localhost:8080/drone.v1.ConnectionService/Connect
+./scripts/test.sh connect alpha
 
-# Alternative: Using buf curl (requires schema):
-# git clone https://github.com/flightpath-dev/flightpath-proto
-# buf curl --http2-prior-knowledge \
-#   --protocol connect \
-#   --schema <path-to-flightpath-proto> \
-#   --data '{"drone_id": "alpha"}' \
-#   http://localhost:8080/drone.v1.ConnectionService/Connect
-```
+## Message Flow
 
-## Architecture
+Frontend:
+1. Says "Connect to drone alpha"
 
-Frontend says: **"Connect to drone alpha"**
-
-Backend does:
+Backend:
 1. Looks up "alpha" in `drones.yaml`
-2. Reads: MAVLink protocol, `/dev/ttyUSB0`, 57600 baud
+2. Reads `mavlink` protocol, `/dev/cu.usbserial-D30JAXGS`, 57600 baud
 3. Creates MAVLink client
 4. Connects and returns success
 
-**Frontend never knows about ports, protocols, or baud rates!**
+Note: Frontend never knows about ports, protocols, or baud rates!
 
 ## Configuration
 
@@ -69,7 +56,7 @@ drones:
     protocol: "mavlink"
     connection:
       type: "serial"
-      port: "/dev/ttyUSB0"
+      port: "/dev/cu.usbserial-D30JAXGS"
       baud_rate: 57600
 
   - id: "bravo"
@@ -117,71 +104,51 @@ flightpath-server/
 ├── cmd/
 │   └── server/
 │       └── main.go              # Server entry point
+├── data/
+│   └── config/
+│       └── drones.yaml          # Drone configurations
 ├── internal/
 │   ├── config/
 │   │   ├── config.go            # Configuration types
 │   │   ├── loader.go            # Environment variable loader
 │   │   └── drones.go            # Drone registry loader
+│   ├── mavlink/
+│   │   └── client.go            # MAVLink protocol implementation
 │   ├── middleware/
 │   │   ├── cors.go              # CORS middleware
 │   │   ├── logging.go           # Request logging
 │   │   └── recovery.go          # Panic recovery
-│   ├── mavlink/
-│   │   └── client.go            # MAVLink protocol implementation
 │   ├── server/
 │   │   ├── dependencies.go      # Shared dependencies
 │   │   └── server.go            # HTTP server setup
 │   └── services/
 │       ├── connection.go        # Connection service (protocol routing)
 │       ├── control.go           # Control service
-│       ├── telemetry.go         # Telemetry service (skeleton)
-│       └── mission.go           # Mission service (skeleton)
-├── data/
-│   └── config/
-│       └── drones.yaml          # Drone configurations
+│       ├── mission.go           # Mission service
+│       └── telemetry.go         # Telemetry service
 ├── scripts/
 │   └── test.sh                  # Helper script for testing
 ├── go.mod
-├── go.sum
-├── .gitignore
-└── README.md
+└── go.sum
 ```
 
 ## API Services
 
-**Note:** All examples use `curl` for simplicity. You can also use `buf curl` with the `--schema` flag if you prefer.
-
 ### 1. ConnectionService ✅ Fully Implemented
 
-Manage drone connections by ID only.
+Manage drone connections by drone id.
 ```bash
+# List all drones in registry
+./scripts/test.sh list
+
 # Connect to drone
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"drone_id": "alpha"}' \
-  http://localhost:8080/drone.v1.ConnectionService/Connect
+./scripts/test.sh connect alpha
 
 # Get connection status
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ConnectionService/GetStatus
-
-# List available drones
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ConnectionService/ListDrones
+./scripts/test.sh status alpha
 
 # Disconnect
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ConnectionService/Disconnect
+./scripts/test.sh disconnect alpha
 ```
 
 ### 2. ControlService ✅ Fully Implemented
@@ -189,54 +156,30 @@ curl -X POST \
 Send flight control commands.
 ```bash
 # Arm drone (⚠️ REMOVE PROPELLERS FOR TESTING!)
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ControlService/Arm
+./scripts/test.sh arm alpha
 
 # Disarm drone
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ControlService/Disarm
+./scripts/test.sh disarm alpha
 
 # Takeoff to 10 meters
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"altitude": 10}' \
-  http://localhost:8080/drone.v1.ControlService/Takeoff
+./scripts/test.sh takeoff alpha 10
 
 # Land
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ControlService/Land
+./scripts/test.sh land alpha
 
 # Return home
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ControlService/ReturnHome
+./scripts/test.sh rtl alpha
 ```
 
-### 3. TelemetryService 🚧 Skeleton Implementation
+### 3. TelemetryService 🚧 Implementation
 
 Stream real-time telemetry data (basic implementation).
 ```bash
 # Get telemetry snapshot
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.TelemetryService/GetSnapshot
+./scripts/test.sh snapshot alpha
 ```
 
-### 4. MissionService 🚧 Skeleton Implementation
+### 4. MissionService 🚧 Implementation
 
 Autonomous mission planning and execution (stubs for future implementation).
 
@@ -245,6 +188,7 @@ Autonomous mission planning and execution (stubs for future implementation).
 ### Step 1: Edit Configuration
 
 Add your drone to `data/config/drones.yaml`:
+
 ```yaml
 drones:
   # ... existing drones ...
@@ -266,11 +210,7 @@ go run cmd/server/main.go
 
 ### Step 3: Connect
 ```bash
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"drone_id": "charlie"}' \
-  http://localhost:8080/drone.v1.ConnectionService/Connect
+./scripts/test.sh connect charlie
 ```
 
 **No code changes needed!**
@@ -315,18 +255,17 @@ go run cmd/server/main.go
 
 # 2. In another terminal
 ```bash
-./scripts/test.sh list                # List drones
+./scripts/test.sh list                # List all drones in registry
 ./scripts/test.sh connect alpha       # Connect to alpha
-./scripts/test.sh status              # Check status
-./scripts/test.sh arm                 # Arm
-./scripts/test.sh takeoff 10          # Takeoff to 10m
-./scripts/test.sh land                # Land
-./scripts/test.sh rtl                 # Return home
-./scripts/test.sh disarm              # Disarm
-./scripts/test.sh disconnect          # Disconnect
+./scripts/test.sh status alpha        # Check status
+./scripts/test.sh snapshot alpha      # Get telemetry snapshot
+./scripts/test.sh arm alpha           # Arm
+./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
+./scripts/test.sh land alpha          # Land
+./scripts/test.sh rtl alpha           # Return home
+./scripts/test.sh disarm alpha        # Disarm
+./scripts/test.sh disconnect alpha    # Disconnect
 ```
-
-**Note:** The script uses the `--http2-prior-knowledge` flag. This is required for development because we're using HTTP instead of HTTPS. In production with HTTPS, this flag is not needed.
 
 ## Development
 
@@ -371,39 +310,12 @@ go test ./internal/config
 
 ## Troubleshooting
 
-### "failed to find service named 'drone.v1.ConnectionService' in schema"
-
-This error occurs when using `buf curl` without providing the schema. The server doesn't have reflection enabled.
-
-**Solution:** Use regular `curl` instead (simpler, no schema required):
-```bash
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"drone_id": "alpha"}' \
-  http://localhost:8080/drone.v1.ConnectionService/Connect
-```
-
-If you prefer `buf curl`, you'll need to provide the schema:
-```bash
-git clone https://github.com/flightpath-dev/flightpath-proto
-buf curl --http2-prior-knowledge \
-  --protocol connect \
-  --schema <path-to-flightpath-proto> \
-  --data '{"drone_id": "alpha"}' \
-  http://localhost:8080/drone.v1.ConnectionService/Connect
-```
-
 ### "Drone not found in registry"
 
 Check that your drone ID exists in `data/config/drones.yaml`:
 ```bash
 # List available drones
-curl -X POST \
-  --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.ConnectionService/ListDrones
+./scripts/test.sh list
 ```
 
 ### "Failed to create MAVLink connection"
