@@ -126,8 +126,8 @@ func (s *ControlServer) SetFlightMode(
 		}), nil
 	}
 
-	// Map generic FlightMode to PX4 custom mode
-	customMode, err := s.mapFlightModeToPX4(req.Msg.Mode)
+	// Map generic FlightMode to PX4 mode encoding
+	px4Mode, err := s.mapFlightModeToPX4(req.Msg.Mode)
 	if err != nil {
 		return connect.NewResponse(&drone.SetFlightModeResponse{
 			Success: false,
@@ -136,14 +136,14 @@ func (s *ControlServer) SetFlightMode(
 	}
 
 	// Send mode change command
-	if err := client.SetMode(customMode); err != nil {
+	if err := client.SetMode(px4Mode); err != nil {
 		return connect.NewResponse(&drone.SetFlightModeResponse{
 			Success: false,
 			Message: fmt.Sprintf("Failed to set mode: %v", err),
 		}), nil
 	}
 
-	logger.Printf("Successfully set mode to %s (PX4 custom mode: %d)", req.Msg.Mode, customMode)
+	logger.Printf("Successfully set mode to %s (PX4 mode: %d)", req.Msg.Mode, px4Mode)
 
 	return connect.NewResponse(&drone.SetFlightModeResponse{
 		Success:     true,
@@ -152,54 +152,55 @@ func (s *ControlServer) SetFlightMode(
 	}), nil
 }
 
-// mapFlightModeToPX4 maps generic FlightMode enum to PX4 custom mode
+// mapFlightModeToPX4 maps generic FlightMode enum to standard PX4 modes
+// These are the modes defined in PX4's mode system
 func (s *ControlServer) mapFlightModeToPX4(mode drone.FlightMode) (uint32, error) {
 	switch mode {
 	case drone.FlightMode_FLIGHT_MODE_MANUAL:
 		// Manual mode - full manual control
-		return mavlink.PX4_CUSTOM_MAIN_MODE_MANUAL, nil
+		return mavlink.PX4_MAIN_MODE_MANUAL, nil
 
 	case drone.FlightMode_FLIGHT_MODE_STABILIZED:
 		// Stabilized mode - attitude stabilization
-		return mavlink.PX4_CUSTOM_MAIN_MODE_STABILIZED, nil
+		return mavlink.PX4_MAIN_MODE_STABILIZED, nil
 
 	case drone.FlightMode_FLIGHT_MODE_ALTITUDE_HOLD:
 		// Altitude control mode
-		return mavlink.PX4_CUSTOM_MAIN_MODE_ALTCTL, nil
+		return mavlink.PX4_MAIN_MODE_ALTCTL, nil
 
 	case drone.FlightMode_FLIGHT_MODE_POSITION_HOLD:
 		// Position control mode (holds GPS position)
-		return mavlink.PX4_CUSTOM_MAIN_MODE_POSCTL, nil
+		return mavlink.PX4_MAIN_MODE_POSCTL, nil
 
 	case drone.FlightMode_FLIGHT_MODE_GUIDED:
 		// Offboard/Guided mode (accepts external position commands)
 		// In PX4, this is OFFBOARD mode
-		return mavlink.PX4_CUSTOM_MAIN_MODE_OFFBOARD, nil
+		return mavlink.PX4_MAIN_MODE_OFFBOARD, nil
 
 	case drone.FlightMode_FLIGHT_MODE_AUTO:
 		// Auto mode - mission mode
 		// Main mode AUTO + sub mode MISSION
-		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_MISSION), nil
+		return s.encodePX4AutoMode(mavlink.PX4_AUTO_MODE_MISSION), nil
 
 	case drone.FlightMode_FLIGHT_MODE_RETURN_HOME:
 		// Return to launch mode
 		// Main mode AUTO + sub mode RTL
-		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_RTL), nil
+		return s.encodePX4AutoMode(mavlink.PX4_AUTO_MODE_RTL), nil
 
 	case drone.FlightMode_FLIGHT_MODE_LAND:
 		// Land mode
 		// Main mode AUTO + sub mode LAND
-		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_LAND), nil
+		return s.encodePX4AutoMode(mavlink.PX4_AUTO_MODE_LAND), nil
 
 	case drone.FlightMode_FLIGHT_MODE_TAKEOFF:
 		// Takeoff mode
 		// Main mode AUTO + sub mode TAKEOFF
-		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF), nil
+		return s.encodePX4AutoMode(mavlink.PX4_AUTO_MODE_TAKEOFF), nil
 
 	case drone.FlightMode_FLIGHT_MODE_LOITER:
 		// Loiter mode (circle around current position)
 		// Main mode AUTO + sub mode LOITER
-		return s.encodePX4AutoMode(mavlink.PX4_CUSTOM_SUB_MODE_AUTO_LOITER), nil
+		return s.encodePX4AutoMode(mavlink.PX4_AUTO_MODE_LOITER), nil
 
 	default:
 		return 0, fmt.Errorf("unsupported flight mode: %s", mode)
@@ -207,9 +208,9 @@ func (s *ControlServer) mapFlightModeToPX4(mode drone.FlightMode) (uint32, error
 }
 
 // encodePX4AutoMode encodes PX4 AUTO main mode with sub mode
-// PX4 custom mode format: main_mode | (sub_mode << 16)
+// PX4 mode format: main_mode | (sub_mode << 16)
 func (s *ControlServer) encodePX4AutoMode(subMode uint32) uint32 {
-	return mavlink.PX4_CUSTOM_MAIN_MODE_AUTO | (subMode << 16)
+	return mavlink.PX4_MAIN_MODE_AUTO | (subMode << 16)
 }
 
 func (s *ControlServer) Takeoff(
