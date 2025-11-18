@@ -9,6 +9,8 @@ import (
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
+
+	drone "github.com/flightpath-dev/flightpath-proto/gen/go/drone/v1"
 )
 
 // PX4 Main Flight Modes
@@ -79,6 +81,22 @@ type TelemetryData struct {
 	LastUpdate time.Time
 }
 
+// MissionState holds mission upload/download state
+type MissionState struct {
+	Uploading        bool
+	Downloading      bool
+	Waypoints        []*drone.Waypoint
+	CurrentIndex     int
+	TotalCount       int
+	UploadComplete   chan error
+	DownloadComplete chan error
+
+	// Mission progress
+	CurrentWaypoint int32
+	TotalWaypoints  int32
+	MissionActive   bool
+}
+
 // Client represents a MAVLink connection to a drone
 type Client struct {
 	node      *gomavlib.Node
@@ -99,6 +117,9 @@ type Client struct {
 
 	// Telemetry data
 	telemetry TelemetryData
+
+	// Mission state
+	missionState MissionState
 }
 
 // Config holds MAVLink client configuration
@@ -138,6 +159,7 @@ func NewClient(cfg Config) (*Client, error) {
 		telemetry: TelemetryData{
 			LastUpdate: time.Now(),
 		},
+		missionState: MissionState{},
 	}
 
 	// Start listening for messages
@@ -185,6 +207,21 @@ func (c *Client) handleMessage(msg message.Message, sysID, compID uint8) {
 
 	case *common.MessageGpsRawInt:
 		c.handleGpsRaw(m)
+
+	case *common.MessageMissionRequest:
+		c.handleMissionRequest(m)
+
+	case *common.MessageMissionRequestInt:
+		c.handleMissionRequestInt(m)
+
+	case *common.MessageMissionAck:
+		c.handleMissionAck(m)
+
+	case *common.MessageMissionCurrent:
+		c.handleMissionCurrent(m)
+
+	case *common.MessageMissionItemReached:
+		c.handleMissionItemReached(m)
 	}
 }
 
@@ -271,7 +308,6 @@ func (c *Client) handleSysStatus(msg *common.MessageSysStatus) {
 	c.telemetry.BatteryCurrent = float64(msg.CurrentBattery) / 100.0
 
 	// Check if critical sensors are healthy
-	// SensorsPresent & SensorsEnabled & SensorsHealth should match for healthy
 	c.telemetry.SensorsHealthy = (msg.OnboardControlSensorsHealth &
 		msg.OnboardControlSensorsEnabled) == msg.OnboardControlSensorsEnabled
 
@@ -288,6 +324,84 @@ func (c *Client) handleGpsRaw(msg *common.MessageGpsRawInt) {
 	c.telemetry.SatelliteCount = int32(msg.SatellitesVisible)
 
 	c.telemetry.LastUpdate = time.Now()
+}
+
+// handleMissionRequest processes MISSION_REQUEST messages
+func (c *Client) handleMissionRequest(msg *common.MessageMissionRequest) {
+	c.handleMissionRequestInt(&common.MessageMissionRequestInt{
+		Seq: msg.Seq,
+	})
+}
+
+// handleMissionRequestInt processes MISSION_REQUEST_INT messages
+func (c *Client) handleMissionRequestInt(msg *common.MessageMissionRequestInt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.missionState.Uploading {
+		c.logger.Printf("MAVLink: Received unexpected MISSION_REQUEST_INT for seq %d", msg.Seq)
+		return
+	}
+
+	seq := int(msg.Seq)
+	if seq >= len(c.missionState.Waypoints) {
+		c.logger.Printf("MAVLink: Invalid waypoint sequence %d (max %d)", seq, len(c.missionState.Waypoints))
+		return
+	}
+
+	c.logger.Printf("MAVLink: Sending waypoint %d/%d", seq+1, len(c.missionState.Waypoints))
+
+	// Send the requested waypoint
+	wp := c.missionState.Waypoints[seq]
+	if err := c.sendMissionItem(wp); err != nil {
+		c.logger.Printf("MAVLink: Error sending waypoint %d: %v", seq, err)
+		if c.missionState.UploadComplete != nil {
+			c.missionState.UploadComplete <- err
+			c.missionState.UploadComplete = nil
+		}
+		c.missionState.Uploading = false
+	}
+}
+
+// handleMissionAck processes MISSION_ACK messages
+func (c *Client) handleMissionAck(msg *common.MessageMissionAck) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Printf("MAVLink: Mission ACK received: type=%d", msg.Type)
+
+	if c.missionState.Uploading {
+		c.missionState.Uploading = false
+		if c.missionState.UploadComplete != nil {
+			if msg.Type == common.MAV_MISSION_ACCEPTED {
+				c.logger.Println("MAVLink: Mission upload successful")
+				c.missionState.UploadComplete <- nil
+			} else {
+				c.logger.Printf("MAVLink: Mission upload failed: %d", msg.Type)
+				c.missionState.UploadComplete <- fmt.Errorf("mission upload failed: %d", msg.Type)
+			}
+			c.missionState.UploadComplete = nil
+		}
+	}
+}
+
+// handleMissionCurrent processes MISSION_CURRENT messages
+func (c *Client) handleMissionCurrent(msg *common.MessageMissionCurrent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.missionState.CurrentWaypoint = int32(msg.Seq)
+	c.missionState.MissionActive = msg.Seq >= 0
+
+	c.logger.Printf("MAVLink: Current mission waypoint: %d", msg.Seq)
+}
+
+// handleMissionItemReached processes MISSION_ITEM_REACHED messages
+func (c *Client) handleMissionItemReached(msg *common.MessageMissionItemReached) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Printf("MAVLink: Mission waypoint %d reached", msg.Seq)
 }
 
 // handleCommandAck processes command acknowledgments
@@ -309,6 +423,147 @@ func (c *Client) handleCommandAck(msg *common.MessageCommandAck) {
 	}
 
 	c.logger.Printf("MAVLink: Command %d result: %s", msg.Command, result)
+}
+
+// UploadMission uploads a mission to the drone
+func (c *Client) UploadMission(waypoints []*drone.Waypoint) error {
+	c.mu.Lock()
+
+	if c.missionState.Uploading {
+		c.mu.Unlock()
+		return fmt.Errorf("mission upload already in progress")
+	}
+
+	systemID := c.systemID
+	c.missionState.Uploading = true
+	c.missionState.Waypoints = waypoints
+	c.missionState.TotalCount = len(waypoints)
+	c.missionState.CurrentIndex = 0
+	c.missionState.UploadComplete = make(chan error, 1)
+
+	uploadComplete := c.missionState.UploadComplete
+	c.mu.Unlock()
+
+	c.logger.Printf("MAVLink: Starting mission upload (%d waypoints)", len(waypoints))
+
+	// Send MISSION_COUNT
+	err := c.node.WriteMessageAll(&common.MessageMissionCount{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		Count:           uint16(len(waypoints)),
+	})
+
+	if err != nil {
+		c.mu.Lock()
+		c.missionState.Uploading = false
+		c.mu.Unlock()
+		return fmt.Errorf("failed to send MISSION_COUNT: %w", err)
+	}
+
+	// Wait for upload to complete (with timeout)
+	select {
+	case err := <-uploadComplete:
+		return err
+	case <-time.After(30 * time.Second):
+		c.mu.Lock()
+		c.missionState.Uploading = false
+		c.mu.Unlock()
+		return fmt.Errorf("mission upload timeout")
+	}
+}
+
+// sendMissionItem sends a single mission item to the drone
+func (c *Client) sendMissionItem(wp *drone.Waypoint) error {
+	systemID := c.systemID
+
+	// Map action to MAVLink command
+	command := c.mapWaypointActionToMAVLink(wp.Action)
+
+	// Convert position
+	lat := int32(wp.Position.Latitude * 1e7)
+	lon := int32(wp.Position.Longitude * 1e7)
+	alt := float32(wp.Position.Altitude)
+
+	return c.node.WriteMessageAll(&common.MessageMissionItemInt{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		Seq:             uint16(wp.Sequence),
+		Frame:           common.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+		Command:         command,
+		Current:         0,
+		Autocontinue:    1,
+		Param1:          float32(wp.HoldTimeSec),
+		Param2:          float32(wp.AcceptanceRadius),
+		Param3:          0,
+		Param4:          float32(wp.Heading),
+		X:               lat,
+		Y:               lon,
+		Z:               alt,
+	})
+}
+
+// mapWaypointActionToMAVLink maps proto waypoint action to MAVLink command
+func (c *Client) mapWaypointActionToMAVLink(action drone.Waypoint_Action) common.MAV_CMD {
+	switch action {
+	case drone.Waypoint_ACTION_TAKEOFF:
+		return common.MAV_CMD_NAV_TAKEOFF
+	case drone.Waypoint_ACTION_LAND:
+		return common.MAV_CMD_NAV_LAND
+	case drone.Waypoint_ACTION_WAYPOINT:
+		return common.MAV_CMD_NAV_WAYPOINT
+	case drone.Waypoint_ACTION_LOITER:
+		return common.MAV_CMD_NAV_LOITER_UNLIM
+	case drone.Waypoint_ACTION_HOLD:
+		return common.MAV_CMD_NAV_LOITER_TIME
+	default:
+		return common.MAV_CMD_NAV_WAYPOINT
+	}
+}
+
+// ClearMission clears the mission from the drone
+func (c *Client) ClearMission() error {
+	c.mu.RLock()
+	systemID := c.systemID
+	c.mu.RUnlock()
+
+	if !c.IsConnected() {
+		return fmt.Errorf("not connected to drone")
+	}
+
+	c.logger.Println("MAVLink: Clearing mission")
+
+	return c.node.WriteMessageAll(&common.MessageMissionClearAll{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+	})
+}
+
+// StartMission starts mission execution at specified waypoint
+func (c *Client) StartMission(waypointIndex int32) error {
+	c.mu.RLock()
+	systemID := c.systemID
+	c.mu.RUnlock()
+
+	if !c.IsConnected() {
+		return fmt.Errorf("not connected to drone")
+	}
+
+	c.logger.Printf("MAVLink: Starting mission at waypoint %d", waypointIndex)
+
+	// Send MISSION_SET_CURRENT
+	return c.node.WriteMessageAll(&common.MessageMissionSetCurrent{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		Seq:             uint16(waypointIndex),
+	})
+}
+
+// GetMissionProgress returns current mission progress
+func (c *Client) GetMissionProgress() (currentWaypoint int32, totalWaypoints int32, active bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.missionState.CurrentWaypoint, c.missionState.TotalWaypoints, c.missionState.MissionActive
 }
 
 // GetTelemetry returns current telemetry data (thread-safe)

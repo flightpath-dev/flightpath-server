@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	drone "github.com/flightpath-dev/flightpath-proto/gen/go/drone/v1"
+	"github.com/flightpath-dev/flightpath-server/internal/mavlink"
 	"github.com/flightpath-dev/flightpath-server/internal/server"
 )
 
@@ -40,12 +41,39 @@ func (s *MissionServer) UploadMission(
 		}), nil
 	}
 
-	// TODO: Implement mission upload via MAVLink
-	// This requires sending MISSION_COUNT, MISSION_ITEM_INT messages
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.UploadMissionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Validate mission
+	if len(req.Msg.Mission.Waypoints) == 0 {
+		return connect.NewResponse(&drone.UploadMissionResponse{
+			Success: false,
+			Message: "Mission must have at least one waypoint",
+		}), nil
+	}
+
+	// Upload mission via MAVLink
+	err := client.UploadMission(req.Msg.Mission.Waypoints)
+	if err != nil {
+		return connect.NewResponse(&drone.UploadMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Mission upload failed: %v", err),
+		}), nil
+	}
+
+	logger.Printf("Mission uploaded successfully: %d waypoints", len(req.Msg.Mission.Waypoints))
 
 	return connect.NewResponse(&drone.UploadMissionResponse{
-		Success: false,
-		Message: "Mission upload not yet implemented",
+		Success:           true,
+		Message:           "Mission uploaded successfully",
+		WaypointsUploaded: int32(len(req.Msg.Mission.Waypoints)),
 	}), nil
 }
 
@@ -66,6 +94,7 @@ func (s *MissionServer) DownloadMission(
 	}
 
 	// TODO: Implement mission download via MAVLink
+	// This requires MISSION_REQUEST_LIST and handling MISSION_COUNT/MISSION_ITEM responses
 
 	return connect.NewResponse(&drone.DownloadMissionResponse{
 		Success: false,
@@ -89,12 +118,38 @@ func (s *MissionServer) StartMission(
 		}), nil
 	}
 
-	// TODO: Implement mission start via MAVLink
-	// This requires setting mode to AUTO and sending MISSION_SET_CURRENT
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.StartMissionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Set mission mode (AUTO with MISSION sub-mode)
+	autoMissionMode := uint32(mavlink.PX4_MAIN_MODE_AUTO | (mavlink.PX4_AUTO_MODE_MISSION << 16))
+	if err := client.SetMode(autoMissionMode); err != nil {
+		return connect.NewResponse(&drone.StartMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to set AUTO mode: %v", err),
+		}), nil
+	}
+
+	// Set current waypoint to 0 (start from beginning)
+	if err := client.StartMission(0); err != nil {
+		return connect.NewResponse(&drone.StartMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to start mission: %v", err),
+		}), nil
+	}
+
+	logger.Println("Mission started successfully")
 
 	return connect.NewResponse(&drone.StartMissionResponse{
-		Success: false,
-		Message: "Mission start not yet implemented",
+		Success: true,
+		Message: "Mission started successfully",
 	}), nil
 }
 
@@ -114,11 +169,30 @@ func (s *MissionServer) PauseMission(
 		}), nil
 	}
 
-	// TODO: Implement mission pause (usually via mode change to HOLD)
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.PauseMissionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Switch to LOITER mode to pause (holds current position)
+	autoLoiterMode := uint32(mavlink.PX4_MAIN_MODE_AUTO | (mavlink.PX4_AUTO_MODE_LOITER << 16))
+	if err := client.SetMode(autoLoiterMode); err != nil {
+		return connect.NewResponse(&drone.PauseMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to pause mission: %v", err),
+		}), nil
+	}
+
+	logger.Println("Mission paused successfully")
 
 	return connect.NewResponse(&drone.PauseMissionResponse{
-		Success: false,
-		Message: "Mission pause not yet implemented",
+		Success: true,
+		Message: "Mission paused successfully",
 	}), nil
 }
 
@@ -138,11 +212,30 @@ func (s *MissionServer) ResumeMission(
 		}), nil
 	}
 
-	// TODO: Implement mission resume (mode back to AUTO)
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.ResumeMissionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Switch back to AUTO MISSION mode
+	autoMissionMode := uint32(mavlink.PX4_MAIN_MODE_AUTO | (mavlink.PX4_AUTO_MODE_MISSION << 16))
+	if err := client.SetMode(autoMissionMode); err != nil {
+		return connect.NewResponse(&drone.ResumeMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to resume mission: %v", err),
+		}), nil
+	}
+
+	logger.Println("Mission resumed successfully")
 
 	return connect.NewResponse(&drone.ResumeMissionResponse{
-		Success: false,
-		Message: "Mission resume not yet implemented",
+		Success: true,
+		Message: "Mission resumed successfully",
 	}), nil
 }
 
@@ -162,11 +255,29 @@ func (s *MissionServer) ClearMission(
 		}), nil
 	}
 
-	// TODO: Implement mission clear (MISSION_CLEAR_ALL)
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.ClearMissionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Clear mission via MAVLink
+	if err := client.ClearMission(); err != nil {
+		return connect.NewResponse(&drone.ClearMissionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to clear mission: %v", err),
+		}), nil
+	}
+
+	logger.Println("Mission cleared successfully")
 
 	return connect.NewResponse(&drone.ClearMissionResponse{
-		Success: false,
-		Message: "Mission clear not yet implemented",
+		Success: true,
+		Message: "Mission cleared successfully",
 	}), nil
 }
 
@@ -185,13 +296,26 @@ func (s *MissionServer) GetProgress(
 		}), nil
 	}
 
-	// TODO: Get actual mission progress from MAVLink
-	// Parse MISSION_CURRENT and MISSION_ITEM_REACHED messages
+	client := s.deps.GetMAVLinkClient()
+
+	// Get mission progress from MAVLink client
+	currentWaypoint, totalWaypoints, active := client.GetMissionProgress()
+
+	var status drone.GetProgressResponse_Status
+	if !active {
+		status = drone.GetProgressResponse_STATUS_IDLE
+	} else if currentWaypoint >= 0 && currentWaypoint < totalWaypoints {
+		status = drone.GetProgressResponse_STATUS_IN_PROGRESS
+	} else if currentWaypoint >= totalWaypoints {
+		status = drone.GetProgressResponse_STATUS_COMPLETED
+	} else {
+		status = drone.GetProgressResponse_STATUS_IDLE
+	}
 
 	return connect.NewResponse(&drone.GetProgressResponse{
-		Status:          drone.GetProgressResponse_STATUS_IDLE,
-		CurrentWaypoint: 0,
-		TotalWaypoints:  0,
+		Status:          status,
+		CurrentWaypoint: currentWaypoint,
+		TotalWaypoints:  totalWaypoints,
 	}), nil
 }
 
@@ -210,6 +334,8 @@ func (s *MissionServer) StreamProgress(
 			fmt.Errorf("not connected to drone"))
 	}
 
+	client := s.deps.GetMAVLinkClient()
+
 	// Calculate interval
 	interval := time.Second
 	if req.Msg.IntervalMs > 0 {
@@ -226,11 +352,24 @@ func (s *MissionServer) StreamProgress(
 			return nil
 
 		case <-ticker.C:
-			// TODO: Get actual mission progress from MAVLink
+			// Get mission progress from MAVLink client
+			currentWaypoint, totalWaypoints, active := client.GetMissionProgress()
+
+			var status drone.StreamProgressResponse_Status
+			if !active {
+				status = drone.StreamProgressResponse_STATUS_IDLE
+			} else if currentWaypoint >= 0 && currentWaypoint < totalWaypoints {
+				status = drone.StreamProgressResponse_STATUS_IN_PROGRESS
+			} else if currentWaypoint >= totalWaypoints {
+				status = drone.StreamProgressResponse_STATUS_COMPLETED
+			} else {
+				status = drone.StreamProgressResponse_STATUS_IDLE
+			}
+
 			progress := &drone.StreamProgressResponse{
-				Status:          drone.StreamProgressResponse_STATUS_IDLE,
-				CurrentWaypoint: 0,
-				TotalWaypoints:  0,
+				Status:          status,
+				CurrentWaypoint: currentWaypoint,
+				TotalWaypoints:  totalWaypoints,
 			}
 
 			if err := stream.Send(progress); err != nil {
