@@ -135,7 +135,7 @@ flightpath-server/
 
 ## API Services
 
-### 1. ConnectionService ✅ Fully Implemented
+### 1. ConnectionService
 
 Manage drone connections by drone id.
 ```bash
@@ -152,7 +152,7 @@ Manage drone connections by drone id.
 ./scripts/test.sh disconnect alpha
 ```
 
-### 2. ControlService ✅ Fully Implemented
+### 2. ControlService
 
 Send flight control commands.
 ```bash
@@ -175,15 +175,40 @@ Send flight control commands.
 ./scripts/test.sh rtl alpha
 ```
 
-### 3. TelemetryService 🚧 Implementation
+### 3. TelemetryService
 
-Stream real-time telemetry data (basic implementation).
+Stream real-time telemetry data from the drone.
+
+**Features:**
+- Real-time position (GPS coordinates, altitude)
+- Velocity (3D velocity vector)
+- Attitude (roll, pitch, yaw)
+- Battery status (voltage, current, remaining %)
+- System health (sensors, GPS)
+- Flight mode
+- GPS accuracy and satellite count
 ```bash
-# Get telemetry snapshot
+# Get telemetry snapshot (single point-in-time reading)
 ./scripts/test.sh snapshot alpha
+
+# Monitor telemetry (continuous updates every 2 seconds)
+./scripts/test.sh monitor alpha
+
+# Stream telemetry requires HTTP/2 streaming client
+# Best tested from frontend or tools like grpcurl
 ```
 
-### 4. MissionService 🚧 Implementation
+**Telemetry Data Available:**
+- **Position**: Latitude, longitude, altitude (MSL)
+- **Velocity**: North, east, down components (m/s)
+- **Attitude**: Roll, pitch, yaw (radians)
+- **Battery**: Voltage (V), current (A), remaining (%)
+- **Health**: Sensor status, GPS status
+- **Navigation**: Heading (°), ground speed (m/s), vertical speed (m/s)
+- **GPS**: Accuracy (m), satellite count
+- **Status**: Armed state, flight mode
+
+### 4. MissionService 🚧 Skeleton Implementation
 
 Autonomous mission planning and execution (stubs for future implementation).
 
@@ -434,8 +459,8 @@ Before flying with API only:
 # 1. Connect to drone
 ./scripts/test.sh connect alpha
 
-# 2. Check status
-./scripts/test.sh status alpha
+# 2. Check telemetry before flight
+./scripts/test.sh snapshot alpha
 
 # 3. Arm drone
 ./scripts/test.sh arm alpha
@@ -446,8 +471,8 @@ Before flying with API only:
 # 5. Takeoff
 ./scripts/test.sh takeoff alpha 20
 
-# 6. Now in GUIDED mode - ready for position commands
-# Drone hovers safely, waiting for commands
+# 6. Monitor telemetry during flight
+./scripts/test.sh monitor alpha
 
 # 7. Send position commands as needed
 # (GoToPosition not yet implemented)
@@ -533,11 +558,12 @@ go run cmd/server/main.go
 
 ## Supported Protocols
 
-- ✅ **MAVLink** (PX4, ArduPilot) - Fully implemented
+- ✅ **MAVLink** (PX4, ArduPilot)
   - Serial connection (USB, UART)
   - UDP connection (for simulators)
   - Full flight mode control
   - Arm/Disarm, Takeoff/Land, RTL
+  - Real-time telemetry streaming
 - 🔜 **DJI SDK** - Planned
 - 🔜 **Custom** - Extensible architecture
 
@@ -576,26 +602,29 @@ go run cmd/server/main.go
 ./scripts/test.sh connect alpha       # Connect to alpha
 ./scripts/test.sh status alpha        # Check status
 
-# 3. Test flight modes (propellers off!)
+# 3. Test telemetry
+./scripts/test.sh snapshot alpha      # Get single telemetry reading
+./scripts/test.sh monitor alpha       # Monitor telemetry (Ctrl+C to stop)
+
+# 4. Test flight modes (propellers off!)
 ./scripts/test.sh arm alpha                  # Arm
 ./scripts/test.sh mode alpha GUIDED          # Set GUIDED mode
 ./scripts/test.sh mode alpha POSITION_HOLD   # Set POSITION_HOLD
 ./scripts/test.sh mode alpha AUTO            # Set AUTO mode
 ./scripts/test.sh disarm alpha               # Disarm
 
-# 4. Full flight test (after successful mode tests)
+# 5. Full flight test (after successful mode tests)
 ./scripts/test.sh arm alpha           # Arm
 ./scripts/test.sh mode alpha GUIDED   # Set GUIDED mode
 ./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
 ./scripts/test.sh land alpha          # Land
 ./scripts/test.sh disarm alpha        # Disarm
 
-# 5. Emergency procedures
+# 6. Emergency procedures
 ./scripts/test.sh rtl alpha           # Return home
 ./scripts/test.sh mode alpha POSITION_HOLD  # Hold position
 
-# 6. Telemetry and cleanup
-./scripts/test.sh snapshot alpha      # Get telemetry
+# 7. Cleanup
 ./scripts/test.sh disconnect alpha    # Disconnect
 ```
 
@@ -605,13 +634,14 @@ go run cmd/server/main.go
 ./scripts/test.sh connect <drone_id>            # Connect to drone
 ./scripts/test.sh disconnect <drone_id>         # Disconnect
 ./scripts/test.sh status <drone_id>             # Get status
+./scripts/test.sh snapshot <drone_id>           # Get telemetry snapshot
+./scripts/test.sh monitor <drone_id>            # Monitor telemetry (live)
 ./scripts/test.sh arm <drone_id>                # Arm
 ./scripts/test.sh disarm <drone_id>             # Disarm
 ./scripts/test.sh mode <drone_id> <MODE>        # Set flight mode
 ./scripts/test.sh takeoff <drone_id> <alt>      # Takeoff
 ./scripts/test.sh land <drone_id>               # Land
 ./scripts/test.sh rtl <drone_id>                # Return home
-./scripts/test.sh snapshot <drone_id>           # Get telemetry
 ```
 
 **Available modes:** `MANUAL`, `STABILIZED`, `ALTITUDE_HOLD`, `POSITION_HOLD`, `GUIDED`, `AUTO`, `RETURN_HOME`, `LAND`, `TAKEOFF`, `LOITER`
@@ -702,6 +732,13 @@ Check that your drone ID exists in `data/config/drones.yaml`:
 3. Check pre-arm checks passed
 4. Review drone logs for specific error messages
 
+### "No telemetry data" or "Zero values"
+
+1. Ensure drone is fully powered on and booted
+2. Wait for GPS lock (satellite count ≥ 6)
+3. Verify MAVLink messages are being received (check server logs)
+4. Some telemetry requires GPS lock before reporting valid data
+
 ### Port already in use
 ```bash
 # Check what's using port 8080
@@ -720,7 +757,7 @@ go run cmd/server/main.go
 - **Iteration 1** ✅ - Connection and basic control (MAVLink)
 - **Iteration 2** ✅ - Protocol-agnostic architecture  
 - **Iteration 3** ✅ - Flight mode control (GUIDED, POSITION_HOLD, AUTO, RTL)
-- **Iteration 4** 📋 - Real-time telemetry streaming
+- **Iteration 4** ✅ - Real-time telemetry streaming
 - **Iteration 5** 📋 - Mission planning and waypoints
 - **Iteration 6** 📋 - Position commands (GoToPosition)
 - **Iteration 7** 📋 - React frontend

@@ -37,6 +37,48 @@ const (
 	PX4_AUTO_MODE_PRECLAND = 9
 )
 
+// TelemetryData holds current telemetry state
+type TelemetryData struct {
+	// Position (from GLOBAL_POSITION_INT)
+	Latitude  float64 // degrees
+	Longitude float64 // degrees
+	Altitude  float64 // meters (MSL)
+
+	// Velocity (from GLOBAL_POSITION_INT)
+	VelocityX float64 // m/s (north)
+	VelocityY float64 // m/s (east)
+	VelocityZ float64 // m/s (down)
+
+	// Attitude (from ATTITUDE)
+	Roll  float64 // radians
+	Pitch float64 // radians
+	Yaw   float64 // radians
+
+	// Navigation (from VFR_HUD)
+	Heading       float64 // degrees
+	GroundSpeed   float64 // m/s
+	VerticalSpeed float64 // m/s
+
+	// Battery (from SYS_STATUS)
+	BatteryVoltage   float64 // volts
+	BatteryRemaining int32   // percent
+	BatteryCurrent   float64 // amps
+
+	// GPS (from GPS_RAW_INT)
+	GPSAccuracy    float64 // meters
+	SatelliteCount int32
+
+	// System health (from SYS_STATUS)
+	SensorsHealthy bool
+
+	// Flight mode (from HEARTBEAT)
+	CustomMode uint32
+	BaseMode   uint8
+
+	// Timestamps
+	LastUpdate time.Time
+}
+
 // Client represents a MAVLink connection to a drone
 type Client struct {
 	node      *gomavlib.Node
@@ -54,6 +96,9 @@ type Client struct {
 	// Connection parameters
 	port     string
 	baudRate int
+
+	// Telemetry data
+	telemetry TelemetryData
 }
 
 // Config holds MAVLink client configuration
@@ -90,6 +135,9 @@ func NewClient(cfg Config) (*Client, error) {
 		connected: false,
 		port:      cfg.Port,
 		baudRate:  cfg.BaudRate,
+		telemetry: TelemetryData{
+			LastUpdate: time.Now(),
+		},
 	}
 
 	// Start listening for messages
@@ -123,9 +171,20 @@ func (c *Client) handleMessage(msg message.Message, sysID, compID uint8) {
 	case *common.MessageStatustext:
 		c.logger.Printf("MAVLink STATUS: [%d] %s", m.Severity, m.Text)
 
-		// Add more message handlers as needed
-		// case *common.MessageGlobalPositionInt:
-		//     c.handleGlobalPosition(m)
+	case *common.MessageGlobalPositionInt:
+		c.handleGlobalPosition(m)
+
+	case *common.MessageAttitude:
+		c.handleAttitude(m)
+
+	case *common.MessageVfrHud:
+		c.handleVfrHud(m)
+
+	case *common.MessageSysStatus:
+		c.handleSysStatus(m)
+
+	case *common.MessageGpsRawInt:
+		c.handleGpsRaw(m)
 	}
 }
 
@@ -149,6 +208,86 @@ func (c *Client) handleHeartbeat(msg *common.MessageHeartbeat, sysID uint8) {
 	if wasArmed != c.armed {
 		c.logger.Printf("MAVLink: Armed status changed: %v", c.armed)
 	}
+
+	// Store flight mode
+	c.telemetry.CustomMode = msg.CustomMode
+	c.telemetry.BaseMode = uint8(msg.BaseMode)
+}
+
+// handleGlobalPosition processes GLOBAL_POSITION_INT messages
+func (c *Client) handleGlobalPosition(msg *common.MessageGlobalPositionInt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Convert from 1E7 degrees to degrees
+	c.telemetry.Latitude = float64(msg.Lat) / 1e7
+	c.telemetry.Longitude = float64(msg.Lon) / 1e7
+
+	// Convert from mm to meters
+	c.telemetry.Altitude = float64(msg.Alt) / 1000.0
+
+	// Convert from cm/s to m/s
+	c.telemetry.VelocityX = float64(msg.Vx) / 100.0
+	c.telemetry.VelocityY = float64(msg.Vy) / 100.0
+	c.telemetry.VelocityZ = float64(msg.Vz) / 100.0
+
+	c.telemetry.LastUpdate = time.Now()
+}
+
+// handleAttitude processes ATTITUDE messages
+func (c *Client) handleAttitude(msg *common.MessageAttitude) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.telemetry.Roll = float64(msg.Roll)
+	c.telemetry.Pitch = float64(msg.Pitch)
+	c.telemetry.Yaw = float64(msg.Yaw)
+
+	c.telemetry.LastUpdate = time.Now()
+}
+
+// handleVfrHud processes VFR_HUD messages
+func (c *Client) handleVfrHud(msg *common.MessageVfrHud) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.telemetry.Heading = float64(msg.Heading)
+	c.telemetry.GroundSpeed = float64(msg.Groundspeed)
+	c.telemetry.VerticalSpeed = float64(msg.Climb)
+
+	c.telemetry.LastUpdate = time.Now()
+}
+
+// handleSysStatus processes SYS_STATUS messages
+func (c *Client) handleSysStatus(msg *common.MessageSysStatus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Convert from millivolts to volts
+	c.telemetry.BatteryVoltage = float64(msg.VoltageBattery) / 1000.0
+	c.telemetry.BatteryRemaining = int32(msg.BatteryRemaining)
+
+	// Convert from centiamps to amps
+	c.telemetry.BatteryCurrent = float64(msg.CurrentBattery) / 100.0
+
+	// Check if critical sensors are healthy
+	// SensorsPresent & SensorsEnabled & SensorsHealth should match for healthy
+	c.telemetry.SensorsHealthy = (msg.OnboardControlSensorsHealth &
+		msg.OnboardControlSensorsEnabled) == msg.OnboardControlSensorsEnabled
+
+	c.telemetry.LastUpdate = time.Now()
+}
+
+// handleGpsRaw processes GPS_RAW_INT messages
+func (c *Client) handleGpsRaw(msg *common.MessageGpsRawInt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// EPH (HDOP * 100) - convert to meters (approximate)
+	c.telemetry.GPSAccuracy = float64(msg.Eph) / 100.0
+	c.telemetry.SatelliteCount = int32(msg.SatellitesVisible)
+
+	c.telemetry.LastUpdate = time.Now()
 }
 
 // handleCommandAck processes command acknowledgments
@@ -170,6 +309,13 @@ func (c *Client) handleCommandAck(msg *common.MessageCommandAck) {
 	}
 
 	c.logger.Printf("MAVLink: Command %d result: %s", msg.Command, result)
+}
+
+// GetTelemetry returns current telemetry data (thread-safe)
+func (c *Client) GetTelemetry() TelemetryData {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.telemetry
 }
 
 // IsConnected returns true if connected to drone

@@ -5,10 +5,12 @@
         "Datalink",
         "failsafes",
         "geofence",
+        "GOPROXY",
         "Holybro",
         "Lockdown",
         "mavlink",
         "Quadcopter",
+        "tonumber",
         "UART",
         "usbserial",
         "Vite"

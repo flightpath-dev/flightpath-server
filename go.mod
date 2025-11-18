@@ -18,7 +18,7 @@ require (
 )
 
 require (
-	github.com/flightpath-dev/flightpath-proto v1.0.2
+	github.com/flightpath-dev/flightpath-proto v1.0.3
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
