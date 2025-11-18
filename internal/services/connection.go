@@ -212,6 +212,9 @@ func (s *ConnectionServer) Disconnect(
 		}), nil
 	}
 
+	// Remove client from dependencies after closing
+	s.deps.ClearMAVLinkClient()
+
 	logger.Println("Successfully disconnected from drone")
 
 	return connect.NewResponse(&drone.DisconnectResponse{

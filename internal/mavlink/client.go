@@ -129,6 +129,9 @@ type Client struct {
 	// Thread-safe state
 	mu sync.RWMutex
 
+	// Track if client is closed
+	closed bool
+
 	// Last heartbeat time
 	lastHeartbeat time.Time
 
@@ -651,6 +654,11 @@ func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	// If closed, always return false
+	if c.closed {
+		return false
+	}
+
 	// Consider disconnected if no heartbeat in 3 seconds
 	if c.connected && time.Since(c.lastHeartbeat) > 3*time.Second {
 		c.connected = false
@@ -820,13 +828,24 @@ func (c *Client) ReturnToLaunch() error {
 }
 
 // Close closes the MAVLink connection
+// This method is idempotent and can be safely called multiple times
 func (c *Client) Close() error {
-	c.logger.Println("MAVLink: Closing connection")
 	c.mu.Lock()
+
+	// If already closed, return early
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+
+	c.logger.Println("MAVLink: Closing connection")
 	c.connected = false
+	c.closed = true
+	node := c.node // Store reference before unlocking
 	c.mu.Unlock()
 
-	c.node.Close()
+	// Close node outside of lock to avoid blocking
+	node.Close()
 	return nil
 }
 

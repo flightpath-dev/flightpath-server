@@ -80,6 +80,13 @@ func (d *Dependencies) HasMAVLinkClient() bool {
 	return d.MAVLinkClient != nil
 }
 
+// ClearMAVLinkClient removes the MAVLink client from dependencies
+func (d *Dependencies) ClearMAVLinkClient() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.MAVLinkClient = nil
+}
+
 // GetDroneRegistry returns the drone registry (thread-safe)
 func (d *Dependencies) GetDroneRegistry() *config.DroneRegistry {
 	d.mu.RLock()
