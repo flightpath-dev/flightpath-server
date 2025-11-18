@@ -346,12 +346,43 @@ func (s *ControlServer) GoToPosition(
 		}), nil
 	}
 
-	// TODO: Implement goto position via MAVLink
-	// This requires SET_POSITION_TARGET_GLOBAL_INT message
-	// Must be in GUIDED/OFFBOARD mode first
+	client := s.deps.GetMAVLinkClient()
+
+	// Check if connected
+	if !client.IsConnected() {
+		return connect.NewResponse(&drone.GoToPositionResponse{
+			Success: false,
+			Message: "Drone is not connected",
+		}), nil
+	}
+
+	// Check if drone is in GUIDED mode
+	telemetry := client.GetTelemetry()
+	if telemetry.CustomMode != mavlink.PX4_MAIN_MODE_OFFBOARD {
+		return connect.NewResponse(&drone.GoToPositionResponse{
+			Success: false,
+			Message: "Drone must be in GUIDED mode to accept position commands",
+		}), nil
+	}
+
+	// Send position setpoint
+	err := client.GoToPosition(
+		req.Msg.Target.Latitude,
+		req.Msg.Target.Longitude,
+		req.Msg.Target.Altitude,
+	)
+
+	if err != nil {
+		return connect.NewResponse(&drone.GoToPositionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to send position command: %v", err),
+		}), nil
+	}
+
+	logger.Printf("Position setpoint sent successfully")
 
 	return connect.NewResponse(&drone.GoToPositionResponse{
-		Success: false,
-		Message: "Go to position not yet implemented",
+		Success: true,
+		Message: "Position command sent successfully",
 	}), nil
 }

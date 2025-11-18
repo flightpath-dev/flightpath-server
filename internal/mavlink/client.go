@@ -39,6 +39,27 @@ const (
 	PX4_AUTO_MODE_PRECLAND = 9
 )
 
+// Position target type mask bits
+// These bits tell the autopilot which fields to use/ignore
+const (
+	// Position
+	POSITION_TARGET_TYPEMASK_X_IGNORE = 0b0000000000000001
+	POSITION_TARGET_TYPEMASK_Y_IGNORE = 0b0000000000000010
+	POSITION_TARGET_TYPEMASK_Z_IGNORE = 0b0000000000000100
+	// Velocity
+	POSITION_TARGET_TYPEMASK_VX_IGNORE = 0b0000000000001000
+	POSITION_TARGET_TYPEMASK_VY_IGNORE = 0b0000000000010000
+	POSITION_TARGET_TYPEMASK_VZ_IGNORE = 0b0000000000100000
+	// Acceleration
+	POSITION_TARGET_TYPEMASK_AX_IGNORE = 0b0000000001000000
+	POSITION_TARGET_TYPEMASK_AY_IGNORE = 0b0000000010000000
+	POSITION_TARGET_TYPEMASK_AZ_IGNORE = 0b0000000100000000
+	// Force/Yaw
+	POSITION_TARGET_TYPEMASK_FORCE_SET       = 0b0000001000000000
+	POSITION_TARGET_TYPEMASK_YAW_IGNORE      = 0b0000010000000000
+	POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE = 0b0000100000000000
+)
+
 // TelemetryData holds current telemetry state
 type TelemetryData struct {
 	// Position (from GLOBAL_POSITION_INT)
@@ -423,6 +444,58 @@ func (c *Client) handleCommandAck(msg *common.MessageCommandAck) {
 	}
 
 	c.logger.Printf("MAVLink: Command %d result: %s", msg.Command, result)
+}
+
+// GoToPosition sends a position setpoint to the drone
+// The drone must be in GUIDED (OFFBOARD) mode to accept position commands
+func (c *Client) GoToPosition(latitude, longitude, altitude float64) error {
+	c.mu.RLock()
+	systemID := c.systemID
+	c.mu.RUnlock()
+
+	if !c.IsConnected() {
+		return fmt.Errorf("not connected to drone")
+	}
+
+	c.logger.Printf("MAVLink: Sending position setpoint: lat=%.6f, lon=%.6f, alt=%.2f",
+		latitude, longitude, altitude)
+
+	// Convert to MAVLink format
+	lat := int32(latitude * 1e7)  // degrees * 1E7
+	lon := int32(longitude * 1e7) // degrees * 1E7
+	alt := float32(altitude)      // meters MSL
+
+	// Type mask: use only position (ignore velocity, acceleration, yaw)
+	typeMask := uint16(
+		POSITION_TARGET_TYPEMASK_VX_IGNORE |
+			POSITION_TARGET_TYPEMASK_VY_IGNORE |
+			POSITION_TARGET_TYPEMASK_VZ_IGNORE |
+			POSITION_TARGET_TYPEMASK_AX_IGNORE |
+			POSITION_TARGET_TYPEMASK_AY_IGNORE |
+			POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+			POSITION_TARGET_TYPEMASK_YAW_IGNORE |
+			POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+	)
+
+	// Send SET_POSITION_TARGET_GLOBAL_INT message
+	return c.node.WriteMessageAll(&common.MessageSetPositionTargetGlobalInt{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		TimeBootMs:      uint32(time.Now().UnixMilli()),
+		CoordinateFrame: common.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK(typeMask),
+		LatInt:          lat,
+		LonInt:          lon,
+		Alt:             alt,
+		Vx:              0,
+		Vy:              0,
+		Vz:              0,
+		Afx:             0,
+		Afy:             0,
+		Afz:             0,
+		Yaw:             0,
+		YawRate:         0,
+	})
 }
 
 // UploadMission uploads a mission to the drone

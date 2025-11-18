@@ -10,6 +10,7 @@
         "Lockdown",
         "mavlink",
         "Quadcopter",
+        "setpoint",
         "tonumber",
         "UART",
         "usbserial",
