@@ -86,6 +86,19 @@ case "$1" in
   rtl)
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.ControlService/ReturnHome
     ;;
+  goto)
+    if [ -z "$3" ] || [ -z "$4" ] || [ -z "$5" ]; then
+      echo "Error: Latitude, longitude, and altitude required"
+      echo "Usage: $0 goto <drone_id> <latitude> <longitude> <altitude>"
+      echo "Example: $0 goto alpha 42.5063 -71.1097 50"
+      exit 1
+    fi
+    echo "🎯 Sending position command to $2:"
+    echo "  Latitude:  $3"
+    echo "  Longitude: $4"
+    echo "  Altitude:  $5 meters"
+    curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\", \"target\": {\"latitude\": $3, \"longitude\": $4, \"altitude\": $5}}" $URL/drone.v1.ControlService/GoToPosition | jq '.'
+    ;;
   mission-upload)
     if [ -z "$3" ]; then
       echo "Error: Mission file required"
@@ -120,27 +133,28 @@ case "$1" in
     curl -X POST --http2-prior-knowledge -H "Content-Type: application/json" -d "{\"drone_id\": \"$2\"}" $URL/drone.v1.MissionService/ClearMission | jq '.'
     ;;
   *)
-    echo "Usage: $0 {list|connect <drone_id>|status <drone_id>|snapshot <drone_id>|monitor <drone_id>|arm <drone_id>|disarm <drone_id>|mode <drone_id> <mode>|takeoff <drone_id> <altitude>|land <drone_id>|rtl <drone_id>|mission-upload <drone_id> <file>|mission-start <drone_id>|mission-pause <drone_id>|mission-resume <drone_id>|mission-progress <drone_id>|mission-clear <drone_id>|disconnect <drone_id>}"
+    echo "Usage: $0 {list|connect <drone_id>|status <drone_id>|snapshot <drone_id>|monitor <drone_id>|arm <drone_id>|disarm <drone_id>|mode <drone_id> <mode>|takeoff <drone_id> <altitude>|land <drone_id>|rtl <drone_id>|goto <drone_id> <lat> <lon> <alt>|mission-upload <drone_id> <file>|mission-start <drone_id>|mission-pause <drone_id>|mission-resume <drone_id>|mission-progress <drone_id>|mission-clear <drone_id>|disconnect <drone_id>}"
     echo ""
     echo "Commands:"
-    echo "  list                                  - List all drones in registry"
-    echo "  connect <drone_id>                    - Connect to drone"
-    echo "  disconnect <drone_id>                 - Disconnect from drone"
-    echo "  status <drone_id>                     - Get connection status"
-    echo "  snapshot <drone_id>                   - Get single telemetry reading"
-    echo "  monitor <drone_id>                    - Monitor telemetry continuously"
-    echo "  arm <drone_id>                        - Arm motors"
-    echo "  disarm <drone_id>                     - Disarm motors"
-    echo "  mode <drone_id> <MODE>                - Set flight mode"
-    echo "  takeoff <drone_id> <altitude>         - Takeoff to altitude (meters)"
-    echo "  land <drone_id>                       - Land at current position"
-    echo "  rtl <drone_id>                        - Return to launch"
-    echo "  mission-upload <drone_id> <file>      - Upload mission from JSON file"
-    echo "  mission-start <drone_id>              - Start mission execution"
-    echo "  mission-pause <drone_id>              - Pause mission execution"
-    echo "  mission-resume <drone_id>             - Resume mission execution"
-    echo "  mission-progress <drone_id>           - Get mission progress"
-    echo "  mission-clear <drone_id>              - Clear mission from drone"
+    echo "  list                                     - List all drones in registry"
+    echo "  connect <drone_id>                       - Connect to drone"
+    echo "  disconnect <drone_id>                    - Disconnect from drone"
+    echo "  status <drone_id>                        - Get connection status"
+    echo "  snapshot <drone_id>                      - Get single telemetry reading"
+    echo "  monitor <drone_id>                       - Monitor telemetry continuously"
+    echo "  arm <drone_id>                           - Arm motors"
+    echo "  disarm <drone_id>                        - Disarm motors"
+    echo "  mode <drone_id> <MODE>                   - Set flight mode"
+    echo "  takeoff <drone_id> <altitude>            - Takeoff to altitude (meters)"
+    echo "  land <drone_id>                          - Land at current position"
+    echo "  rtl <drone_id>                           - Return to launch"
+    echo "  goto <drone_id> <lat> <lon> <alt>        - Go to position (requires GUIDED mode)"
+    echo "  mission-upload <drone_id> <file>         - Upload mission from JSON file"
+    echo "  mission-start <drone_id>                 - Start mission execution"
+    echo "  mission-pause <drone_id>                 - Pause mission execution"
+    echo "  mission-resume <drone_id>                - Resume mission execution"
+    echo "  mission-progress <drone_id>              - Get mission progress"
+    echo "  mission-clear <drone_id>                 - Clear mission from drone"
     echo ""
     echo "Available Modes:"
     echo "  MANUAL, STABILIZED, ALTITUDE_HOLD, POSITION_HOLD, GUIDED,"
@@ -152,6 +166,7 @@ case "$1" in
     echo "  $0 monitor alpha"
     echo "  $0 mode alpha GUIDED"
     echo "  $0 takeoff alpha 10"
+    echo "  $0 goto alpha 42.5063 -71.1097 50"
     echo "  $0 mission-upload alpha mission.json"
     echo "  $0 mission-start alpha"
     exit 1

@@ -173,6 +173,27 @@ Send flight control commands.
 
 # Return home
 ./scripts/test.sh rtl alpha
+
+# Go to position (must be in GUIDED mode)
+./scripts/test.sh goto alpha 42.5063 -71.1097 50
+```
+
+**Position Commands:**
+
+GoToPosition allows dynamic control of the drone's position. The drone flies to the specified GPS coordinates and altitude.
+
+**Requirements:**
+- Drone must be in **GUIDED mode**
+- Drone must be armed
+- GPS lock required (satellite count ≥ 6)
+
+**Position Format:**
+- Latitude: degrees (e.g., 42.5063)
+- Longitude: degrees (e.g., -71.1097)
+- Altitude: meters MSL (e.g., 50)
+```bash
+# Example: Fly to specific coordinates at 50m altitude
+./scripts/test.sh goto alpha 42.5063 -71.1097 50
 ```
 
 ### 3. TelemetryService
@@ -320,8 +341,9 @@ Flightpath is designed for API-controlled flight **without RC transmitter**. Und
 # 3. Takeoff
 ./scripts/test.sh takeoff alpha 20
 
-# 4. Send position commands (no mode changes needed!)
-# Drone responds immediately and holds position when idle
+# 4. Send position commands
+./scripts/test.sh goto alpha 42.5070 -71.1090 25
+./scripts/test.sh goto alpha 42.5065 -71.1085 30
 
 # 5. Land
 ./scripts/test.sh land alpha
@@ -481,13 +503,14 @@ Flightpath uses generic flight mode names that map to PX4-specific modes:
 
 ### Recommended Approach
 
-**For API Control:**
+**For API Control (Dynamic Flight):**
 1. Stay in **GUIDED mode** for entire flight
-2. Drone holds position when not commanded (safe)
-3. Responds immediately to position commands
-4. Switch to **POSITION_HOLD** only to "freeze" drone
+2. Use **GoToPosition** to fly dynamically
+3. Drone holds position when not commanded (safe)
+4. Responds immediately to position commands
+5. Switch to **POSITION_HOLD** only to "freeze" drone
 
-**For Autonomous Operations:**
+**For Autonomous Operations (Pre-planned):**
 1. Use **AUTO mode** with pre-programmed missions
 2. Upload mission including takeoff and landing
 3. Start mission and monitor progress
@@ -509,9 +532,9 @@ Before flying with API only:
 8. ✅ Test Return Home procedure
 9. ✅ Monitor telemetry during flight
 
-### Safe Command Sequence (API Control)
+### Safe Command Sequence (API Control with Position Commands)
 ```bash
-# Complete flight sequence with GUIDED mode
+# Complete dynamic flight sequence with GUIDED mode
 
 # 1. Connect to drone
 ./scripts/test.sh connect alpha
@@ -528,11 +551,14 @@ Before flying with API only:
 # 5. Takeoff
 ./scripts/test.sh takeoff alpha 20
 
-# 6. Monitor telemetry during flight
-./scripts/test.sh monitor alpha
+# 6. Monitor telemetry
+./scripts/test.sh snapshot alpha
 
-# 7. Send position commands as needed
-# (GoToPosition not yet implemented)
+# 7. Send position commands (fly square pattern)
+./scripts/test.sh goto alpha 42.5070 -71.1097 25   # North
+./scripts/test.sh goto alpha 42.5070 -71.1090 25   # East
+./scripts/test.sh goto alpha 42.5063 -71.1090 25   # South
+./scripts/test.sh goto alpha 42.5063 -71.1097 25   # West (back to start)
 
 # 8. Land
 ./scripts/test.sh land alpha
@@ -665,6 +691,7 @@ go run cmd/server/main.go
   - Arm/Disarm, Takeoff/Land, RTL
   - Real-time telemetry streaming
   - Mission upload and execution
+  - Position commands (GoToPosition)
 - 🔜 **DJI SDK** - Planned
 - 🔜 **Custom** - Extensible architecture
 
@@ -719,26 +746,34 @@ go run cmd/server/main.go
 ./scripts/test.sh mission-progress alpha              # Check progress
 ./scripts/test.sh mission-clear alpha                 # Clear mission
 
-# 6. Full flight test (after successful mode tests)
-./scripts/test.sh arm alpha           # Arm
-./scripts/test.sh mode alpha GUIDED   # Set GUIDED mode
-./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
-./scripts/test.sh land alpha          # Land
-./scripts/test.sh disarm alpha        # Disarm
+# 6. Test position commands (propellers off!)
+./scripts/test.sh arm alpha                       # Arm
+./scripts/test.sh mode alpha GUIDED               # Set GUIDED mode
+./scripts/test.sh goto alpha 42.5063 -71.1097 50  # Send position
+./scripts/test.sh disarm alpha                    # Disarm
 
-# 7. Full mission test (after successful mode tests)
+# 7. Full flight test with position commands (after successful tests)
+./scripts/test.sh arm alpha                       # Arm
+./scripts/test.sh mode alpha GUIDED               # Set GUIDED mode
+./scripts/test.sh takeoff alpha 20                # Takeoff to 20m
+./scripts/test.sh goto alpha 42.5070 -71.1097 25  # Fly north
+./scripts/test.sh goto alpha 42.5070 -71.1090 25  # Fly east
+./scripts/test.sh land alpha                      # Land
+./scripts/test.sh disarm alpha                    # Disarm
+
+# 8. Full mission test (after successful mode tests)
 ./scripts/test.sh mission-upload alpha mission.json  # Upload
 ./scripts/test.sh arm alpha                          # Arm
 ./scripts/test.sh mission-start alpha                # Start mission
 ./scripts/test.sh mission-progress alpha             # Monitor
 ./scripts/test.sh disarm alpha                       # After completion
 
-# 8. Emergency procedures
+# 9. Emergency procedures
 ./scripts/test.sh rtl alpha                     # Return home
 ./scripts/test.sh mode alpha POSITION_HOLD      # Hold position
 ./scripts/test.sh mission-pause alpha           # Pause mission
 
-# 9. Cleanup
+# 10. Cleanup
 ./scripts/test.sh disconnect alpha    # Disconnect
 ```
 
@@ -756,6 +791,7 @@ go run cmd/server/main.go
 ./scripts/test.sh takeoff <drone_id> <alt>            # Takeoff
 ./scripts/test.sh land <drone_id>                     # Land
 ./scripts/test.sh rtl <drone_id>                      # Return home
+./scripts/test.sh goto <drone_id> <lat> <lon> <alt>   # Go to position
 ./scripts/test.sh mission-upload <drone_id> <file>    # Upload mission
 ./scripts/test.sh mission-start <drone_id>            # Start mission
 ./scripts/test.sh mission-pause <drone_id>            # Pause mission
@@ -867,6 +903,17 @@ Check that your drone ID exists in `data/config/drones.yaml`:
 4. Verify at least one waypoint in mission
 5. Check server logs for specific error messages
 
+### "Drone must be in GUIDED mode"
+
+GoToPosition commands require GUIDED mode:
+```bash
+# Set GUIDED mode first
+./scripts/test.sh mode alpha GUIDED
+
+# Then send position commands
+./scripts/test.sh goto alpha 42.5063 -71.1097 50
+```
+
 ### Port already in use
 ```bash
 # Check what's using port 8080
@@ -887,7 +934,7 @@ go run cmd/server/main.go
 - **Iteration 3** ✅ - Flight mode control (GUIDED, POSITION_HOLD, AUTO, RTL)
 - **Iteration 4** ✅ - Real-time telemetry streaming
 - **Iteration 5** ✅ - Mission planning and waypoints
-- **Iteration 6** 📋 - Position commands (GoToPosition)
+- **Iteration 6** ✅ - Position commands (GoToPosition)
 - **Iteration 7** 📋 - React frontend
 - **Iteration 8** 📋 - Authentication
 
