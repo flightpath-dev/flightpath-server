@@ -193,9 +193,6 @@ Stream real-time telemetry data from the drone.
 
 # Monitor telemetry (continuous updates every 2 seconds)
 ./scripts/test.sh monitor alpha
-
-# Stream telemetry requires HTTP/2 streaming client
-# Best tested from frontend or tools like grpcurl
 ```
 
 **Telemetry Data Available:**
@@ -208,9 +205,93 @@ Stream real-time telemetry data from the drone.
 - **GPS**: Accuracy (m), satellite count
 - **Status**: Armed state, flight mode
 
-### 4. MissionService 🚧 Skeleton Implementation
+### 4. MissionService
 
-Autonomous mission planning and execution (stubs for future implementation).
+Autonomous mission planning and execution.
+
+**Features:**
+- Upload waypoint missions to drone
+- Start/pause/resume mission execution
+- Clear missions from drone
+- Track mission progress (current waypoint)
+- Stream real-time progress updates
+
+**Not Yet Implemented:**
+- Mission download from drone (planned for future)
+```bash
+# Upload a mission
+./scripts/test.sh mission-upload alpha mission.json
+
+# Start mission (switches to AUTO mode)
+./scripts/test.sh mission-start alpha
+
+# Pause mission (switches to LOITER)
+./scripts/test.sh mission-pause alpha
+
+# Resume mission
+./scripts/test.sh mission-resume alpha
+
+# Get mission progress
+./scripts/test.sh mission-progress alpha
+
+# Clear mission
+./scripts/test.sh mission-clear alpha
+```
+
+**Mission File Format (mission.json):**
+```json
+{
+  "mission": {
+    "id": "survey-001",
+    "name": "Area Survey",
+    "waypoints": [
+      {
+        "sequence": 0,
+        "action": "ACTION_TAKEOFF",
+        "position": {
+          "latitude": 42.5063,
+          "longitude": -71.1097,
+          "altitude": 20
+        }
+      },
+      {
+        "sequence": 1,
+        "action": "ACTION_WAYPOINT",
+        "position": {
+          "latitude": 42.5070,
+          "longitude": -71.1090,
+          "altitude": 30
+        },
+        "hold_time_sec": 5,
+        "acceptance_radius": 2.0
+      },
+      {
+        "sequence": 2,
+        "action": "ACTION_LAND",
+        "position": {
+          "latitude": 42.5063,
+          "longitude": -71.1097,
+          "altitude": 0
+        }
+      }
+    ]
+  }
+}
+```
+
+**Waypoint Actions:**
+- `ACTION_TAKEOFF` - Takeoff to altitude
+- `ACTION_LAND` - Land at position
+- `ACTION_WAYPOINT` - Fly to waypoint
+- `ACTION_LOITER` - Circle indefinitely at position
+- `ACTION_HOLD` - Hold position for specified time
+
+**Waypoint Parameters:**
+- `sequence` - Waypoint order (0-indexed)
+- `position` - Latitude, longitude, altitude (MSL in meters)
+- `hold_time_sec` - How long to hold at waypoint (optional)
+- `acceptance_radius` - Radius to consider waypoint reached (optional, meters)
+- `heading` - Target heading at waypoint (optional, degrees)
 
 ## Flight Modes for API Control
 
@@ -297,49 +378,25 @@ POSITION_HOLD mode:
 
 **Mission workflow:**
 ```bash
-# 1. Create mission file with waypoints
-cat > mission.json << 'EOF'
-{
-  "mission": {
-    "id": "survey-001",
-    "name": "Area Survey",
-    "waypoints": [
-      {
-        "sequence": 0,
-        "action": "ACTION_TAKEOFF",
-        "position": {"latitude": 37.7749, "longitude": -122.4194, "altitude": 20}
-      },
-      {
-        "sequence": 1,
-        "action": "ACTION_WAYPOINT",
-        "position": {"latitude": 37.7750, "longitude": -122.4195, "altitude": 30}
-      },
-      {
-        "sequence": 2,
-        "action": "ACTION_LAND",
-        "position": {"latitude": 37.7749, "longitude": -122.4194, "altitude": 0}
-      }
-    ]
-  }
-}
-EOF
+# 1. Create mission file with waypoints (see mission.json format above)
 
 # 2. Connect and upload mission
 ./scripts/test.sh connect alpha
-curl -X POST --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d @mission.json \
-  http://localhost:8080/drone.v1.MissionService/UploadMission
+./scripts/test.sh mission-upload alpha mission.json
 
 # 3. Arm and start mission
 ./scripts/test.sh arm alpha
-curl -X POST --http2-prior-knowledge \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  http://localhost:8080/drone.v1.MissionService/StartMission
+./scripts/test.sh mission-start alpha
 
 # Mission runs automatically: takeoff → waypoints → land
-# No position commands needed!
+# Monitor progress
+./scripts/test.sh mission-progress alpha
+
+# Pause if needed
+./scripts/test.sh mission-pause alpha
+
+# Resume
+./scripts/test.sh mission-resume alpha
 ```
 
 **Why AUTO for missions?**
@@ -487,6 +544,44 @@ Before flying with API only:
 ./scripts/test.sh disconnect alpha
 ```
 
+### Safe Command Sequence (Mission Mode)
+```bash
+# Complete autonomous mission sequence
+
+# 1. Connect to drone
+./scripts/test.sh connect alpha
+
+# 2. Upload mission
+./scripts/test.sh mission-upload alpha mission.json
+
+# 3. Check telemetry
+./scripts/test.sh snapshot alpha
+
+# 4. Arm drone
+./scripts/test.sh arm alpha
+
+# 5. Start mission (automatically switches to AUTO mode)
+./scripts/test.sh mission-start alpha
+
+# 6. Monitor mission progress
+./scripts/test.sh mission-progress alpha
+
+# 7. Pause if needed
+./scripts/test.sh mission-pause alpha
+
+# 8. Resume if paused
+./scripts/test.sh mission-resume alpha
+
+# 9. After completion, disarm
+./scripts/test.sh disarm alpha
+
+# 10. Clear mission
+./scripts/test.sh mission-clear alpha
+
+# 11. Disconnect
+./scripts/test.sh disconnect alpha
+```
+
 ### Emergency Procedures (No RC)
 
 **If something goes wrong:**
@@ -501,7 +596,12 @@ Before flying with API only:
    ./scripts/test.sh mode alpha POSITION_HOLD
 ```
 
-3. **Emergency Land** (Land immediately at current location)
+3. **Pause Mission** (If in AUTO mode)
+```bash
+   ./scripts/test.sh mission-pause alpha
+```
+
+4. **Emergency Land** (Land immediately at current location)
 ```bash
    ./scripts/test.sh land alpha
 ```
@@ -558,12 +658,13 @@ go run cmd/server/main.go
 
 ## Supported Protocols
 
-- ✅ **MAVLink** (PX4, ArduPilot)
+- **MAVLink** (PX4, ArduPilot)
   - Serial connection (USB, UART)
   - UDP connection (for simulators)
   - Full flight mode control
   - Arm/Disarm, Takeoff/Land, RTL
   - Real-time telemetry streaming
+  - Mission upload and execution
 - 🔜 **DJI SDK** - Planned
 - 🔜 **Custom** - Extensible architecture
 
@@ -613,35 +714,54 @@ go run cmd/server/main.go
 ./scripts/test.sh mode alpha AUTO            # Set AUTO mode
 ./scripts/test.sh disarm alpha               # Disarm
 
-# 5. Full flight test (after successful mode tests)
+# 5. Test mission planning
+./scripts/test.sh mission-upload alpha mission.json   # Upload mission
+./scripts/test.sh mission-progress alpha              # Check progress
+./scripts/test.sh mission-clear alpha                 # Clear mission
+
+# 6. Full flight test (after successful mode tests)
 ./scripts/test.sh arm alpha           # Arm
 ./scripts/test.sh mode alpha GUIDED   # Set GUIDED mode
 ./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
 ./scripts/test.sh land alpha          # Land
 ./scripts/test.sh disarm alpha        # Disarm
 
-# 6. Emergency procedures
-./scripts/test.sh rtl alpha           # Return home
-./scripts/test.sh mode alpha POSITION_HOLD  # Hold position
+# 7. Full mission test (after successful mode tests)
+./scripts/test.sh mission-upload alpha mission.json  # Upload
+./scripts/test.sh arm alpha                          # Arm
+./scripts/test.sh mission-start alpha                # Start mission
+./scripts/test.sh mission-progress alpha             # Monitor
+./scripts/test.sh disarm alpha                       # After completion
 
-# 7. Cleanup
+# 8. Emergency procedures
+./scripts/test.sh rtl alpha                     # Return home
+./scripts/test.sh mode alpha POSITION_HOLD      # Hold position
+./scripts/test.sh mission-pause alpha           # Pause mission
+
+# 9. Cleanup
 ./scripts/test.sh disconnect alpha    # Disconnect
 ```
 
 ### Available Test Commands
 ```bash
-./scripts/test.sh list                          # List drones
-./scripts/test.sh connect <drone_id>            # Connect to drone
-./scripts/test.sh disconnect <drone_id>         # Disconnect
-./scripts/test.sh status <drone_id>             # Get status
-./scripts/test.sh snapshot <drone_id>           # Get telemetry snapshot
-./scripts/test.sh monitor <drone_id>            # Monitor telemetry (live)
-./scripts/test.sh arm <drone_id>                # Arm
-./scripts/test.sh disarm <drone_id>             # Disarm
-./scripts/test.sh mode <drone_id> <MODE>        # Set flight mode
-./scripts/test.sh takeoff <drone_id> <alt>      # Takeoff
-./scripts/test.sh land <drone_id>               # Land
-./scripts/test.sh rtl <drone_id>                # Return home
+./scripts/test.sh list                                # List drones
+./scripts/test.sh connect <drone_id>                  # Connect to drone
+./scripts/test.sh disconnect <drone_id>               # Disconnect
+./scripts/test.sh status <drone_id>                   # Get status
+./scripts/test.sh snapshot <drone_id>                 # Get telemetry snapshot
+./scripts/test.sh monitor <drone_id>                  # Monitor telemetry (live)
+./scripts/test.sh arm <drone_id>                      # Arm
+./scripts/test.sh disarm <drone_id>                   # Disarm
+./scripts/test.sh mode <drone_id> <MODE>              # Set flight mode
+./scripts/test.sh takeoff <drone_id> <alt>            # Takeoff
+./scripts/test.sh land <drone_id>                     # Land
+./scripts/test.sh rtl <drone_id>                      # Return home
+./scripts/test.sh mission-upload <drone_id> <file>    # Upload mission
+./scripts/test.sh mission-start <drone_id>            # Start mission
+./scripts/test.sh mission-pause <drone_id>            # Pause mission
+./scripts/test.sh mission-resume <drone_id>           # Resume mission
+./scripts/test.sh mission-progress <drone_id>         # Get progress
+./scripts/test.sh mission-clear <drone_id>            # Clear mission
 ```
 
 **Available modes:** `MANUAL`, `STABILIZED`, `ALTITUDE_HOLD`, `POSITION_HOLD`, `GUIDED`, `AUTO`, `RETURN_HOME`, `LAND`, `TAKEOFF`, `LOITER`
@@ -739,6 +859,14 @@ Check that your drone ID exists in `data/config/drones.yaml`:
 3. Verify MAVLink messages are being received (check server logs)
 4. Some telemetry requires GPS lock before reporting valid data
 
+### "Mission upload failed"
+
+1. Verify mission JSON format is correct
+2. Check waypoint coordinates are valid (lat/lon in degrees)
+3. Ensure drone is connected and responsive
+4. Verify at least one waypoint in mission
+5. Check server logs for specific error messages
+
 ### Port already in use
 ```bash
 # Check what's using port 8080
@@ -758,7 +886,7 @@ go run cmd/server/main.go
 - **Iteration 2** ✅ - Protocol-agnostic architecture  
 - **Iteration 3** ✅ - Flight mode control (GUIDED, POSITION_HOLD, AUTO, RTL)
 - **Iteration 4** ✅ - Real-time telemetry streaming
-- **Iteration 5** 📋 - Mission planning and waypoints
+- **Iteration 5** ✅ - Mission planning and waypoints
 - **Iteration 6** 📋 - Position commands (GoToPosition)
 - **Iteration 7** 📋 - React frontend
 - **Iteration 8** 📋 - Authentication
