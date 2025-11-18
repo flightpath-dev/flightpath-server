@@ -163,13 +163,12 @@ Send flight control commands.
 ./scripts/test.sh disarm alpha
 
 # Set flight mode
-# Modes: MANUAL, STABILIZED, ALTITUDE_HOLD, POSITION_HOLD, GUIDED, AUTO, RETURN_HOME, LAND, TAKEOFF, LOITER
 ./scripts/test.sh mode alpha GUIDED
 
 # Takeoff to 10 meters
 ./scripts/test.sh takeoff alpha 10
 
-# Land at current or specified location
+# Land
 ./scripts/test.sh land alpha
 
 # Return home
@@ -218,7 +217,7 @@ Flightpath is designed for API-controlled flight **without RC transmitter**. Und
 # 4. Send position commands (no mode changes needed!)
 # Drone responds immediately and holds position when idle
 
-# 5. Land at current or specified location
+# 5. Land
 ./scripts/test.sh land alpha
 
 # 6. Disarm
@@ -240,6 +239,10 @@ Flightpath is designed for API-controlled flight **without RC transmitter**. Und
 - **Rejects position/velocity commands from API** ❌
 - Only responds to RC stick inputs (if connected)
 - Think: "Hold position and ignore external commands"
+```bash
+# Switch to POSITION_HOLD to "freeze" drone
+./scripts/test.sh mode alpha POSITION_HOLD
+```
 
 **When to use:**
 - 🔒 Lock drone in place (prevent buggy API commands)
@@ -298,14 +301,16 @@ EOF
 
 # 2. Connect and upload mission
 ./scripts/test.sh connect alpha
-buf curl --http2-prior-knowledge --protocol connect \
-  --data @mission.json \
+curl -X POST --http2-prior-knowledge \
+  -H "Content-Type: application/json" \
+  -d @mission.json \
   http://localhost:8080/drone.v1.MissionService/UploadMission
 
 # 3. Arm and start mission
 ./scripts/test.sh arm alpha
-buf curl --http2-prior-knowledge --protocol connect \
-  --data '{}' \
+curl -X POST --http2-prior-knowledge \
+  -H "Content-Type: application/json" \
+  -d '{}' \
   http://localhost:8080/drone.v1.MissionService/StartMission
 
 # Mission runs automatically: takeoff → waypoints → land
@@ -333,6 +338,30 @@ buf curl --http2-prior-knowledge --protocol connect \
 ./scripts/test.sh rtl alpha
 ```
 
+### Other Modes
+
+Additional modes available for specific use cases:
+
+**STABILIZED** - Attitude stabilization only (manual control)
+```bash
+./scripts/test.sh mode alpha STABILIZED
+```
+
+**ALTITUDE_HOLD** - Holds altitude, manual horizontal control
+```bash
+./scripts/test.sh mode alpha ALTITUDE_HOLD
+```
+
+**MANUAL** - Full manual control (no stabilization)
+```bash
+./scripts/test.sh mode alpha MANUAL
+```
+
+**LOITER** - Circle around current position
+```bash
+./scripts/test.sh mode alpha LOITER
+```
+
 ### Mode Comparison
 
 | Mode | Accepts API Commands | Best For | Safety |
@@ -341,6 +370,32 @@ buf curl --http2-prior-knowledge --protocol connect \
 | **POSITION_HOLD** | ❌ No | Safety lockdown | ⭐⭐⭐⭐⭐ |
 | **AUTO (Mission)** | ❌ No (follows mission) | Pre-planned autonomous | ⭐⭐⭐⭐⭐ |
 | **RTL** | ❌ No (autonomous return) | Emergency return | ⭐⭐⭐⭐⭐ |
+| **ALTITUDE_HOLD** | ❌ No | Manual flight with altitude hold | ⭐⭐⭐ |
+| **STABILIZED** | ❌ No | Manual flight with stabilization | ⭐⭐ |
+| **MANUAL** | ❌ No | Full manual control | ⭐ |
+| **LOITER** | ❌ No | Circle position | ⭐⭐⭐⭐ |
+
+### PX4 Mode Mapping Reference
+
+Flightpath uses generic flight mode names that map to PX4-specific modes:
+
+| Flightpath Mode | PX4 Main Mode | PX4 Sub Mode | PX4 Mode Value | Description |
+|-----------------|---------------|--------------|----------------|-------------|
+| `MANUAL` | `MANUAL (1)` | - | `1` | Full manual control |
+| `STABILIZED` | `STABILIZED (7)` | - | `7` | Attitude stabilization |
+| `ALTITUDE_HOLD` | `ALTCTL (2)` | - | `2` | Altitude control |
+| `POSITION_HOLD` | `POSCTL (3)` | - | `3` | GPS position hold |
+| `GUIDED` | `OFFBOARD (6)` | - | `6` | External position control (API) |
+| `AUTO` | `AUTO (4)` | `MISSION (4)` | `262148` | Follow mission waypoints |
+| `RETURN_HOME` | `AUTO (4)` | `RTL (5)` | `327684` | Return to launch |
+| `LAND` | `AUTO (4)` | `LAND (6)` | `393220` | Land at position |
+| `TAKEOFF` | `AUTO (4)` | `TAKEOFF (2)` | `131076` | Takeoff |
+| `LOITER` | `AUTO (4)` | `LOITER (3)` | `196612` | Circle position |
+
+**PX4 Mode Encoding:**
+- Simple modes: Use main mode value directly
+- AUTO sub-modes: `main_mode | (sub_mode << 16)`
+  - Example: RTL = `4 | (5 << 16)` = `327684`
 
 ### Recommended Approach
 
@@ -372,23 +427,58 @@ Before flying with API only:
 8. ✅ Test Return Home procedure
 9. ✅ Monitor telemetry during flight
 
+### Safe Command Sequence (API Control)
+```bash
+# Complete flight sequence with GUIDED mode
+
+# 1. Connect to drone
+./scripts/test.sh connect alpha
+
+# 2. Check status
+./scripts/test.sh status alpha
+
+# 3. Arm drone
+./scripts/test.sh arm alpha
+
+# 4. Set GUIDED mode (accepts API commands)
+./scripts/test.sh mode alpha GUIDED
+
+# 5. Takeoff
+./scripts/test.sh takeoff alpha 20
+
+# 6. Now in GUIDED mode - ready for position commands
+# Drone hovers safely, waiting for commands
+
+# 7. Send position commands as needed
+# (GoToPosition not yet implemented)
+
+# 8. Land
+./scripts/test.sh land alpha
+
+# 9. Disarm
+./scripts/test.sh disarm alpha
+
+# 10. Disconnect
+./scripts/test.sh disconnect alpha
+```
+
 ### Emergency Procedures (No RC)
 
 **If something goes wrong:**
 
 1. **Return Home** (Most Common)
 ```bash
-./scripts/test.sh rtl alpha
+   ./scripts/test.sh rtl alpha
 ```
 
 2. **Hold Position** (Stop and hover - switch to POSITION_HOLD)
 ```bash
-./scripts/test.sh mode alpha POSITION_HOLD
+   ./scripts/test.sh mode alpha POSITION_HOLD
 ```
 
 3. **Emergency Land** (Land immediately at current location)
 ```bash
-./scripts/test.sh land alpha
+   ./scripts/test.sh land alpha
 ```
 
 **⚠️ DO NOT use EmergencyStop - it cuts motors and drone will fall!**
@@ -415,7 +505,6 @@ If API/network connection is lost:
 ### Step 1: Edit Configuration
 
 Add your drone to `data/config/drones.yaml`:
-
 ```yaml
 drones:
   # ... existing drones ...
@@ -447,6 +536,8 @@ go run cmd/server/main.go
 - ✅ **MAVLink** (PX4, ArduPilot) - Fully implemented
   - Serial connection (USB, UART)
   - UDP connection (for simulators)
+  - Full flight mode control
+  - Arm/Disarm, Takeoff/Land, RTL
 - 🔜 **DJI SDK** - Planned
 - 🔜 **Custom** - Extensible architecture
 
@@ -480,18 +571,50 @@ console.log(response.message);
 # 1. Start server
 go run cmd/server/main.go
 
-# 2. In another terminal
-./scripts/test.sh list                # List all drones in registry
+# 2. In another terminal - test connection
+./scripts/test.sh list                # List all drones
 ./scripts/test.sh connect alpha       # Connect to alpha
 ./scripts/test.sh status alpha        # Check status
-./scripts/test.sh snapshot alpha      # Get telemetry snapshot
+
+# 3. Test flight modes (propellers off!)
+./scripts/test.sh arm alpha                  # Arm
+./scripts/test.sh mode alpha GUIDED          # Set GUIDED mode
+./scripts/test.sh mode alpha POSITION_HOLD   # Set POSITION_HOLD
+./scripts/test.sh mode alpha AUTO            # Set AUTO mode
+./scripts/test.sh disarm alpha               # Disarm
+
+# 4. Full flight test (after successful mode tests)
 ./scripts/test.sh arm alpha           # Arm
+./scripts/test.sh mode alpha GUIDED   # Set GUIDED mode
 ./scripts/test.sh takeoff alpha 10    # Takeoff to 10m
-./scripts/test.sh land alpha          # Land at current or specified location
-./scripts/test.sh rtl alpha           # Return home
+./scripts/test.sh land alpha          # Land
 ./scripts/test.sh disarm alpha        # Disarm
+
+# 5. Emergency procedures
+./scripts/test.sh rtl alpha           # Return home
+./scripts/test.sh mode alpha POSITION_HOLD  # Hold position
+
+# 6. Telemetry and cleanup
+./scripts/test.sh snapshot alpha      # Get telemetry
 ./scripts/test.sh disconnect alpha    # Disconnect
 ```
+
+### Available Test Commands
+```bash
+./scripts/test.sh list                          # List drones
+./scripts/test.sh connect <drone_id>            # Connect to drone
+./scripts/test.sh disconnect <drone_id>         # Disconnect
+./scripts/test.sh status <drone_id>             # Get status
+./scripts/test.sh arm <drone_id>                # Arm
+./scripts/test.sh disarm <drone_id>             # Disarm
+./scripts/test.sh mode <drone_id> <MODE>        # Set flight mode
+./scripts/test.sh takeoff <drone_id> <alt>      # Takeoff
+./scripts/test.sh land <drone_id>               # Land
+./scripts/test.sh rtl <drone_id>                # Return home
+./scripts/test.sh snapshot <drone_id>           # Get telemetry
+```
+
+**Available modes:** `MANUAL`, `STABILIZED`, `ALTITUDE_HOLD`, `POSITION_HOLD`, `GUIDED`, `AUTO`, `RETURN_HOME`, `LAND`, `TAKEOFF`, `LOITER`
 
 ## Development
 
@@ -572,6 +695,13 @@ Check that your drone ID exists in `data/config/drones.yaml`:
 3. Confirm baud rate in `drones.yaml` matches drone settings
 4. Test with QGroundControl first to verify hardware connection
 
+### "Mode change failed" or "Command denied"
+
+1. Check drone is armed (some modes require armed state)
+2. Verify GPS lock for GPS-dependent modes (GUIDED, POSITION_HOLD, AUTO, RTL)
+3. Check pre-arm checks passed
+4. Review drone logs for specific error messages
+
 ### Port already in use
 ```bash
 # Check what's using port 8080
@@ -588,11 +718,13 @@ go run cmd/server/main.go
 ## Roadmap
 
 - **Iteration 1** ✅ - Connection and basic control (MAVLink)
-- **Iteration 2** ✅ - Protocol-agnostic architecture
-- **Iteration 3** 📋 - Real-time telemetry streaming
-- **Iteration 4** 📋 - Mission planning and waypoints
-- **Iteration 5** 📋 - React frontend
-- **Iteration 6** 📋 - Authentication
+- **Iteration 2** ✅ - Protocol-agnostic architecture  
+- **Iteration 3** ✅ - Flight mode control (GUIDED, POSITION_HOLD, AUTO, RTL)
+- **Iteration 4** 📋 - Real-time telemetry streaming
+- **Iteration 5** 📋 - Mission planning and waypoints
+- **Iteration 6** 📋 - Position commands (GoToPosition)
+- **Iteration 7** 📋 - React frontend
+- **Iteration 8** 📋 - Authentication
 
 ## License
 
