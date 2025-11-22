@@ -129,9 +129,6 @@ type Client struct {
 	// Thread-safe state
 	mu sync.RWMutex
 
-	// Track if client is closed
-	closed bool
-
 	// Last heartbeat time
 	lastHeartbeat time.Time
 
@@ -144,6 +141,10 @@ type Client struct {
 
 	// Mission state
 	missionState MissionState
+
+	// Ground station heartbeat
+	stopHeartbeat chan struct{}
+	heartbeatDone chan struct{}
 }
 
 // Config holds MAVLink client configuration
@@ -183,13 +184,81 @@ func NewClient(cfg Config) (*Client, error) {
 		telemetry: TelemetryData{
 			LastUpdate: time.Now(),
 		},
-		missionState: MissionState{},
+		missionState:  MissionState{},
+		stopHeartbeat: make(chan struct{}),
+		heartbeatDone: make(chan struct{}),
 	}
 
 	// Start listening for messages
 	go client.listen()
 
+	// Start sending ground station heartbeat and system time
+	go client.sendGroundStationMessages()
+
 	return client, nil
+}
+
+// sendGroundStationMessages sends periodic HEARTBEAT and SYSTEM_TIME messages
+// This identifies Flightpath as a ground station and provides GPS assistance
+func (c *Client) sendGroundStationMessages() {
+	defer close(c.heartbeatDone)
+	c.logger.Println("MAVLink: Starting ground station message sender")
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopHeartbeat:
+			c.logger.Println("MAVLink: Stopping ground station message sender")
+			return
+
+		case <-ticker.C:
+			// Send HEARTBEAT - identifies us as a ground control station
+			// This satisfies PX4's COM_DL_LOSS_T requirement
+			err := c.node.WriteMessageAll(&common.MessageHeartbeat{
+				Type:           common.MAV_TYPE_GCS, // Ground Control Station
+				Autopilot:      common.MAV_AUTOPILOT_INVALID,
+				BaseMode:       0,
+				CustomMode:     0,
+				SystemStatus:   common.MAV_STATE_ACTIVE,
+				MavlinkVersion: 3,
+			})
+			if err != nil {
+				c.logger.Printf("MAVLink: Error sending HEARTBEAT: %v", err)
+			}
+
+			// Send SYSTEM_TIME - provides accurate time for GPS assistance
+			// This helps GPS achieve lock faster (warm start vs cold start)
+			currentTime := time.Now()
+			err = c.node.WriteMessageAll(&common.MessageSystemTime{
+				TimeUnixUsec: uint64(currentTime.UnixMicro()),
+				TimeBootMs:   uint32(currentTime.UnixMilli() % (1 << 32)),
+			})
+			if err != nil {
+				c.logger.Printf("MAVLink: Error sending SYSTEM_TIME: %v", err)
+			}
+		}
+	}
+}
+
+// requestDataStreams requests telemetry data streams from the drone
+// This ensures we receive regular updates of position, attitude, etc.
+func (c *Client) requestDataStreams() error {
+	c.mu.RLock()
+	systemID := c.systemID
+	c.mu.RUnlock()
+
+	c.logger.Println("MAVLink: Requesting data streams from drone")
+
+	// Request all data streams at 10 Hz
+	return c.node.WriteMessageAll(&common.MessageRequestDataStream{
+		TargetSystem:    systemID,
+		TargetComponent: 1,
+		ReqStreamId:     uint8(common.MAV_DATA_STREAM_ALL),
+		ReqMessageRate:  10, // 10 Hz
+		StartStop:       1,  // Start streaming
+	})
 }
 
 // listen processes incoming MAVLink messages
@@ -654,11 +723,6 @@ func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// If closed, always return false
-	if c.closed {
-		return false
-	}
-
 	// Consider disconnected if no heartbeat in 3 seconds
 	if c.connected && time.Since(c.lastHeartbeat) > 3*time.Second {
 		c.connected = false
@@ -693,6 +757,13 @@ func (c *Client) WaitForConnection(timeout time.Duration) error {
 	for {
 		if c.IsConnected() {
 			c.logger.Printf("MAVLink: Heartbeat received from system %d", c.GetSystemID())
+
+			// Request data streams now that we're connected
+			if err := c.requestDataStreams(); err != nil {
+				c.logger.Printf("MAVLink: Warning - failed to request data streams: %v", err)
+				// Non-fatal - continue anyway
+			}
+
 			return nil
 		}
 
@@ -828,24 +899,25 @@ func (c *Client) ReturnToLaunch() error {
 }
 
 // Close closes the MAVLink connection
-// This method is idempotent and can be safely called multiple times
 func (c *Client) Close() error {
-	c.mu.Lock()
+	c.logger.Println("MAVLink: Closing connection")
 
-	// If already closed, return early
-	if c.closed {
-		c.mu.Unlock()
-		return nil
+	// Stop ground station message sender
+	close(c.stopHeartbeat)
+
+	// Wait for goroutine to finish (with timeout)
+	select {
+	case <-c.heartbeatDone:
+		c.logger.Println("MAVLink: Ground station message sender stopped")
+	case <-time.After(2 * time.Second):
+		c.logger.Println("MAVLink: Warning - ground station message sender stop timeout")
 	}
 
-	c.logger.Println("MAVLink: Closing connection")
+	c.mu.Lock()
 	c.connected = false
-	c.closed = true
-	node := c.node // Store reference before unlocking
 	c.mu.Unlock()
 
-	// Close node outside of lock to avoid blocking
-	node.Close()
+	c.node.Close()
 	return nil
 }
 

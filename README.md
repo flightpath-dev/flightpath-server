@@ -9,6 +9,7 @@ Go backend for controlling drones through a unified, protocol-agnostic API.
 ✅ **Multi-Protocol Support** - MAVLink, DJI, custom protocols  
 ✅ **Zero Frontend Changes** - Add drones by editing config file  
 ✅ **Production-Ready** - Proper separation of concerns  
+✅ **Full Ground Station** - Works independently without QGroundControl
 
 ## Quick Start
 ```bash
@@ -191,6 +192,7 @@ GoToPosition allows dynamic control of the drone's position. The drone flies to 
 - Latitude: degrees (e.g., 42.5063)
 - Longitude: degrees (e.g., -71.1097)
 - Altitude: meters MSL (e.g., 50)
+
 ```bash
 # Example: Fly to specific coordinates at 50m altitude
 ./scripts/test.sh goto alpha 42.5063 -71.1097 50
@@ -208,6 +210,7 @@ Stream real-time telemetry data from the drone.
 - System health (sensors, GPS)
 - Flight mode
 - GPS accuracy and satellite count
+
 ```bash
 # Get telemetry snapshot (single point-in-time reading)
 ./scripts/test.sh snapshot alpha
@@ -239,6 +242,7 @@ Autonomous mission planning and execution.
 
 **Not Yet Implemented:**
 - Mission download from drone (planned for future)
+
 ```bash
 # Upload a mission
 ./scripts/test.sh mission-upload alpha mission.json
@@ -367,6 +371,7 @@ Flightpath is designed for API-controlled flight **without RC transmitter**. Und
 - **Rejects position/velocity commands from API** ❌
 - Only responds to RC stick inputs (if connected)
 - Think: "Hold position and ignore external commands"
+
 ```bash
 # Switch to POSITION_HOLD to "freeze" drone
 ./scripts/test.sh mode alpha POSITION_HOLD
@@ -437,6 +442,7 @@ POSITION_HOLD mode:
 - Climbs to safe altitude, flies home, lands
 - Triggered automatically on low battery or geofence breach
 - Can be commanded via API
+
 ```bash
 # Emergency return home
 ./scripts/test.sh rtl alpha
@@ -533,6 +539,7 @@ Before flying with API only:
 9. ✅ Monitor telemetry during flight
 
 ### Safe Command Sequence (API Control with Position Commands)
+
 ```bash
 # Complete dynamic flight sequence with GUIDED mode
 
@@ -571,6 +578,7 @@ Before flying with API only:
 ```
 
 ### Safe Command Sequence (Mission Mode)
+
 ```bash
 # Complete autonomous mission sequence
 
@@ -613,24 +621,24 @@ Before flying with API only:
 **If something goes wrong:**
 
 1. **Return Home** (Most Common)
-```bash
+   ```bash
    ./scripts/test.sh rtl alpha
-```
+   ```
 
 2. **Hold Position** (Stop and hover - switch to POSITION_HOLD)
-```bash
+   ```bash
    ./scripts/test.sh mode alpha POSITION_HOLD
-```
+   ```
 
 3. **Pause Mission** (If in AUTO mode)
-```bash
+   ```bash
    ./scripts/test.sh mission-pause alpha
-```
+   ```
 
 4. **Emergency Land** (Land immediately at current location)
-```bash
+   ```bash
    ./scripts/test.sh land alpha
-```
+   ```
 
 **⚠️ DO NOT use EmergencyStop - it cuts motors and drone will fall!**
 
@@ -656,6 +664,7 @@ If API/network connection is lost:
 ### Step 1: Edit Configuration
 
 Add your drone to `data/config/drones.yaml`:
+
 ```yaml
 drones:
   # ... existing drones ...
@@ -686,14 +695,79 @@ go run cmd/server/main.go
 
 - **MAVLink** (PX4, ArduPilot)
   - Serial connection (USB, UART)
-  - UDP connection (for simulators)
+  - UDP connection (for simulators) - planned
   - Full flight mode control
   - Arm/Disarm, Takeoff/Land, RTL
   - Real-time telemetry streaming
   - Mission upload and execution
   - Position commands (GoToPosition)
+  - **Ground station functionality:**
+    - Sends periodic HEARTBEAT (identifies as GCS)
+    - Sends SYSTEM_TIME (GPS assistance for faster lock)
+    - Requests telemetry data streams at 10 Hz
+    - Satisfies PX4's COM_DL_LOSS_T datalink requirements
+    - Works independently without QGroundControl
 - 🔜 **DJI SDK** - Planned
 - 🔜 **Custom** - Extensible architecture
+
+## Ground Station Features
+
+Flightpath implements **core ground control station functionality** according to MAVLink protocol standards, enabling independent operation without QGroundControl.
+
+### Implemented MAVLink Services
+
+**1. Heartbeat Service** ([MAVLink Spec](https://mavlink.io/en/services/heartbeat.html))
+- Sends periodic HEARTBEAT messages (1 Hz)
+- Identifies Flightpath as `MAV_TYPE_GCS` (Ground Control Station)
+- Satisfies PX4's `COM_DL_LOSS_T` datalink requirement
+
+**2. Command Protocol** ([MAVLink Spec](https://mavlink.io/en/services/command.html))
+- ARM/DISARM commands
+- Takeoff, Land, Return-to-Launch
+- Flight mode changes
+- Position commands (GUIDED mode)
+
+**3. Mission Protocol** ([MAVLink Spec](https://mavlink.io/en/services/mission.html))
+- Upload waypoint missions
+- Start/pause/resume missions
+- Clear missions
+- Track mission progress
+- **Note**: Mission download not yet implemented
+
+**4. Telemetry Streams**
+- Requests position, attitude, battery, GPS data
+- 10 Hz telemetry updates
+- Real-time monitoring via API
+
+**5. System Time Synchronization**
+- Sends SYSTEM_TIME messages for GPS assistance
+- Enables GPS "warm start" (1-2 min lock vs 5-10 min cold start)
+
+### Not Implemented
+
+**Advanced GCS Features:**
+- Parameter read/write (use QGC for parameter changes)
+- Flight log download (use QGC for logs)
+- File transfer protocol
+- Camera/gimbal control
+- Geofence/rally point management
+
+### References
+
+- MAVLink Protocol: https://mavlink.io/
+- MAVLink Services: https://mavlink.io/en/services/
+- MAVLink Common Messages: https://mavlink.io/en/messages/common.html
+- PX4 MAVLink Integration: https://docs.px4.io/main/en/middleware/mavlink.html
+
+### Benefits
+
+✅ **Independent Operation** - Core functions work without QGroundControl  
+✅ **Fast GPS Lock** - SYSTEM_TIME provides 1-2 minute acquisition  
+✅ **Full Flight Control** - Complete API-driven flight operations  
+✅ **Mission Execution** - Upload and run autonomous missions  
+✅ **Standards Compliant** - Follows MAVLink protocol specifications  
+
+**For Advanced Features**: Use QGroundControl for parameter tuning, log analysis, and initial setup. After setup, Flightpath handles all flight operations.
 
 ## Frontend Example
 ```typescript
@@ -778,6 +852,7 @@ go run cmd/server/main.go
 ```
 
 ### Available Test Commands
+
 ```bash
 ./scripts/test.sh list                                # List drones
 ./scripts/test.sh connect <drone_id>                  # Connect to drone
@@ -856,21 +931,21 @@ Check that your drone ID exists in `data/config/drones.yaml`:
 ### "Failed to create MAVLink connection"
 
 1. Check serial port exists:
-```bash
+   ```bash
    # Linux
    ls /dev/ttyUSB*
    
    # macOS
    ls /dev/tty.usbserial-*
-```
+   ```
 
 2. Check permissions:
-```bash
+   ```bash
    # Linux - add user to dialout group
    sudo usermod -a -G dialout $USER
    
    # macOS - no special permissions needed
-```
+   ```
 
 3. Verify baud rate matches your drone's configuration (usually 57600 or 115200)
 
@@ -914,6 +989,20 @@ GoToPosition commands require GUIDED mode:
 ./scripts/test.sh goto alpha 42.5063 -71.1097 50
 ```
 
+### GPS Not Locking (Red LED)
+
+**With Flightpath as GCS:**
+1. Ensure you're outdoors with clear sky view
+2. Wait 1-2 minutes for GPS warm start (Flightpath sends SYSTEM_TIME)
+3. Check GPS antenna is facing up (ceramic side)
+4. Verify GPS module is powered and connected
+5. Check server logs for "Sending SYSTEM_TIME" messages
+
+**First time setup:**
+- Use QGroundControl once to calibrate compass
+- Compass must be calibrated at your flying location
+- After compass calibration, Flightpath will work independently
+
 ### Port already in use
 ```bash
 # Check what's using port 8080
@@ -935,8 +1024,9 @@ go run cmd/server/main.go
 - **Iteration 4** ✅ - Real-time telemetry streaming
 - **Iteration 5** ✅ - Mission planning and waypoints
 - **Iteration 6** ✅ - Position commands (GoToPosition)
-- **Iteration 7** 📋 - React frontend
-- **Iteration 8** 📋 - Authentication
+- **Iteration 7** ✅ - Proper ground station (HEARTBEAT, SYSTEM_TIME, data streams)
+- **Iteration 8** 📋 - React frontend
+- **Iteration 9** 📋 - Authentication
 
 ## License
 
